@@ -1,0 +1,73 @@
+# ====== OS / IDE ======
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ====== Python ======
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ====== Node ======
+node_modules/
+.npm/
+.yarn/
+
+# ====== Java / Maven / Gradle ======
+target/
+*.class
+*.jar
+*.war
+
+# ====== Logs ======
+logs/
+*.log
+
+# ====== Docker / 容器运行时数据（自动生成） ======
+data/
+
+# ====== 临时文件 / 测试产物 ======
+*.tmp
+*.bak
+*.swp
+*.orig
+/tmp/
+*.pid
+
+# ====== Python demo app 临时文件 ======
+app/backend/.venv/
+app/backend/venv/
+app/backend/__pycache__/
+app/backend/.pytest_cache/
+
+# ====== 系统自动生成 ======
+.DS_Store
+*.lnk
+*.tmp
+
+# ====== 项目特定 ======
+# PowerShell 错误的 "20", "30" 等 fd 文件（5.1 节）
+[0-9]
+[0-9][0-9]
+[0-9][0-9][0-9]
+
+# 临时 web.xml 等
+docker/hadoop/*.bak
+docker/hive/*.bak
+
+# 临时 REST 测试文件
+/tmp/
+
+# 容器内的临时文件
+*.pid
