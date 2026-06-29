@@ -3,7 +3,7 @@
 > 选题十八：智能景区管理系统 — 大数据底层平台  
 > 一键部署、分布式、面向教学的完整大数据解决方案
 
-本项目基于 **Docker Compose** 一键部署一套**真分布式**的大数据集群环境，涵盖 Hadoop/HDFS / Sqoop / HBase / Kafka / Spark / Hive / ZooKeeper / MySQL 全部核心组件，共 **16 个容器**。用于支撑"智能景区管理系统"的全部数据处理、分析、机器学习任务。
+本项目基于 **Docker Compose** 一键部署一套**真分布式**的大数据集群环境，涵盖 Hadoop/HDFS / Sqoop / HBase / Kafka / Spark / Hive / ZooKeeper / MySQL 全部核心组件，共 **17 个容器**。用于支撑"智能景区管理系统"的全部数据处理、分析、机器学习任务。
 
 ---
 
@@ -22,6 +22,24 @@
 | Spark | 3.1.0 | 计算引擎 |
 
 镜像 tag 在 `.env` 里集中管理，**改一个变量 = 全栈升级**。
+
+---
+
+## ## 快速开始
+
+```bat
+cd smart-scenic-bigdata
+scripts\start.bat          REM 启动大数据平台（17 容器）
+scripts\install-deps.bat   REM 首次启动：装 Python 依赖
+scripts\start-app.bat      REM 启动 Demo 应用（自动检测 + 智能双轨）
+```
+
+打开浏览器：
+- 前端：http://localhost:8080
+- API 文档：http://localhost:8000/docs
+- 引擎状态：http://localhost:8000/api/predict/_engine
+
+详见 [docs/快速开始.md](docs/快速开始.md)
 
 ---
 
