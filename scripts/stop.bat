@@ -1,9 +1,6 @@
 @echo off
-REM ============================================================
-REM Smart Scenic BigData - Stop all services
+REM Smart Scenic BigData - Stop All Services
 REM Double-click to run. Data is preserved.
-REM ============================================================
-chcp 65001 >nul
 cd /d "%~dp0.."
 
 echo ==========================================
@@ -11,7 +8,6 @@ echo   Smart Scenic BigData - Stopping
 echo ==========================================
 echo.
 
-REM Stop frontend/backend processes
 taskkill /FI "WINDOWTITLE eq smart-scenic-backend*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq smart-scenic-frontend*" /T /F >nul 2>&1
 
@@ -20,12 +16,11 @@ docker compose down
 
 echo.
 echo ==========================================
-echo   Stopped. Data is preserved in volumes.
+echo   Stopped. Data preserved in volumes.
 echo ==========================================
 echo.
-echo Full cleanup (deletes ALL data): scripts\reset.bat
-echo Restart: scripts\start.bat + scripts\start-app.bat
+echo To restart: double-click scripts\start.bat
+echo Full reset: double-click scripts\reset.bat
 echo.
-echo This window will close in 5 seconds...
-timeout /t 5 >nul
-exit /b 0
+
+ping -n 5 127.0.0.1 >nul

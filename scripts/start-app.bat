@@ -1,106 +1,73 @@
 @echo off
-REM ============================================================
-REM Smart Scenic BigData - Web App Starter
-REM Double-click to run. Auto-detects environment + installs deps.
-REM ============================================================
-chcp 65001 >nul
-setlocal enabledelayedexpansion
+REM Smart Scenic BigData - Start Web Application
+REM Double-click to run. Auto-installs Python deps.
 cd /d "%~dp0.."
 
 echo ==========================================
-echo   Smart Scenic BigData - Web App
+echo   Smart Scenic BigData - Web Application
 echo ==========================================
 echo.
 
-REM ---------- Step 1: Check big data platform ----------
-echo [1/5] Checking big data platform...
-docker ps --format "{{.Names}}" 2>nul | findstr /C:"hadoop-namenode" >nul
+REM Check big data platform
+echo [1/5] Checking platform...
+docker inspect hadoop-namenode >nul 2>&1
 if errorlevel 1 (
-    echo        [WARN] Big data platform NOT running!
-    echo        Please run scripts\start.bat first.
-    echo.
-    echo Press any key to continue anyway, or close this window...
-    pause >nul
+    echo [WARNING] Platform not running. Run scripts\start.bat first.
+    pause
 )
 
-REM ---------- Step 2: Detect mode (check Docker demo-backend) ----------
-echo [2/5] Detecting mode...
-set MODE=1
-docker ps --format "{{.Names}}" 2>nul | findstr /C:"demo-backend" >nul
-if not errorlevel 1 (
-    echo        Docker demo-backend is running - using that mode
-    set MODE=2
-) else (
-    echo        Using Local Python mode (will install deps if needed)
-)
-
-if "%MODE%"=="1" (
-    REM === Local Python mode ===
-    cd /d "%~dp0..\app\backend"
-
-    if not exist ".venv\Scripts\python.exe" (
-        echo [Setup] No venv found, creating...
-        python -m venv .venv
-        if errorlevel 1 (
-            echo [ERROR] Failed to create venv. Is Python 3.10+ installed?
-            pause >nul
-            exit /b 1
-        )
-    )
-
-    echo [Setup] Installing/verifying dependencies...
-    ".venv\Scripts\python.exe" -m pip install --upgrade pip -q -i https://pypi.tuna.tsinghua.edu.cn/simple 2>nul
-    ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple 2>nul
+REM Setup venv if needed
+echo [2/5] Checking Python venv...
+cd /d "%~dp0..\app\backend"
+if not exist ".venv\Scripts\python.exe" (
+    echo Creating venv...
+    python -m venv .venv
     if errorlevel 1 (
-        echo [WARN] Some packages failed (likely PySpark). Continuing with sklearn fallback.
+        echo [ERROR] Python 3.10+ required.
+        pause
+        exit /b 1
     )
-
-    set BACKEND_PY=app\backend\.venv\Scripts\python.exe
-    cd /d "%~dp0.."
+    echo Installing deps...
+    ".venv\Scripts\python.exe" -m pip install --upgrade pip -q --timeout 30 -i https://pypi.tuna.tsinghua.edu.cn/simple
+    ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt --timeout 120 -i https://pypi.tuna.tsinghua.edu.cn/simple
+    if errorlevel 1 (
+        echo [WARNING] Some pip packages failed. Using fallback.
+    )
+    echo venv ready.
 ) else (
-    REM === Docker mode ===
-    echo [Docker] demo-backend already running
+    echo venv exists at .venv
 )
+cd /d "%~dp0.."
 
-echo.
-echo [3/5] Checking PySpark training status...
-docker exec spark-master ls /shared/models/ >nul 2>&1
-if errorlevel 1 (
-    echo        No models yet - will auto-train in background after startup.
-) else (
-    echo        PySpark models found - will load on backend startup.
-)
+REM Start backend
+echo [3/5] Starting FastAPI backend...
+cd /d "%~dp0..\app\backend"
+start "smart-scenic-backend" /MIN ".venv\Scripts\python.exe" -m uvicorn main:app --host 0.0.0.0 --port 8000
+timeout /t 5 /nobreak >nul
+cd /d "%~dp0.."
 
-echo.
-echo [4/5] Starting FastAPI backend on port 8000...
-if "%MODE%"=="1" (
-    cd /d "%~dp0..\app\backend"
-    start "smart-scenic-backend" /B "%BACKEND_PY%" main.py > "%TEMP%\backend.log" 2>&1
-) else (
-    docker compose logs -f demo-backend > "%TEMP%\backend.log" 2>&1
-)
-timeout /t 3 /nobreak >nul
-echo        Backend log: %TEMP%\backend.log
-
-:start_frontend
-echo [5/5] Starting frontend HTTP server on port 8080...
+REM Start frontend
+echo [4/5] Starting frontend...
 cd /d "%~dp0..\app\frontend"
-start "smart-scenic-frontend" /B python -m http.server 8080 > "%TEMP%\frontend.log" 2>&1
+start "smart-scenic-frontend" /MIN python -m http.server 8080
 timeout /t 2 /nobreak >nul
 cd /d "%~dp0.."
 
+REM Verify
+echo [5/5] Verifying...
+docker inspect hadoop-namenode >nul 2>&1
+if errorlevel 1 (
+    echo [WARNING] Platform not running. Some features may not work.
+)
 echo.
 echo ==========================================
-echo   Ready! Open in browser:
-echo ==========================================
-echo     Frontend:    http://localhost:8080
-echo     API docs:    http://localhost:8000/docs
-echo     System admin: http://localhost:8080/manage.html  (^> System tab)
+echo   Ready!
+echo     Frontend:  http://localhost:8080
+echo     API docs:  http://localhost:8000/docs
+echo     Admin:     http://localhost:8080/manage.html
 echo ==========================================
 echo.
-echo Press Ctrl+C in the new window to stop servers.
-echo Or run scripts\stop.bat
+echo Close this window to stop all servers.
+echo Or press Ctrl+C to stop, then close.
 echo.
-echo This window will close in 30 seconds (or press any key)...
-timeout /t 30 >nul
-exit /b 0
+ping -n 999999 127.0.0.1 >nul

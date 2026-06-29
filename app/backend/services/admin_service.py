@@ -500,13 +500,14 @@ def get_datasets_status() -> Dict[str, Any]:
 
 
 def get_hdfs_status() -> Dict[str, Any]:
-    """查 HDFS /scenic/ 目录"""
+    """查 HDFS /scenic/ 顶层目录（不递归，避免 16s 延迟）"""
     try:
-        r = _run_in_container(config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "-R", "/scenic/", timeout=15)
+        # Use -ls (not -R) to list only top-level - much faster
+        r = _run_in_container(config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "/scenic/", timeout=10)
         proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
         return {
             "available": proc["returncode"] == 0,
-            "output": proc["stdout"] or "",
+            "output": (proc["stdout"] or "")[:5000],  # 限制大小
             "error": proc["stderr"] if proc["returncode"] != 0 else None,
         }
     except Exception as e:
