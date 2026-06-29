@@ -1,4 +1,4 @@
-# 智能景区大数据平台 (Smart Scenic BigData Platform)
+﻿# 智能景区大数据平台 (Smart Scenic BigData Platform)
 
 > 选题十八：智能景区管理系统 6.2-6.5 评分点
 > 真分布式大数据平台 + 完整业务系统 4 页 Web 前端 + 30+ REST API + Kafka 实时流
@@ -426,3 +426,43 @@ scripts\stop.bat           REM 关闭
 ## License
 
 MIT
+
+## 开发环境（热重载）
+
+> 运行时编辑代码，改完即生效，不用重启。
+
+### 启动开发服务器
+
+`at
+scripts\start.bat          REM 启动大数据平台（首次）
+scripts\dev-start.bat      REM 启动开发模式（热重载）
+`
+
+### 热重载机制
+
+| 层 | 技术 | 触发自动刷新 |
+|------|------|------------|
+| 后端 Python | uvicorn --reload | 改 .py 文件自动重启 |
+| 前端 HTML/JS/CSS | livereload | 改 .html/.js/.css 浏览器自动刷新 |
+
+### 开发 vs 生产
+
+| 场景 | 命令 | 特点 |
+|------|------|------|
+| **开发**（改代码） | dev-start.bat | 热重载、即时生效 |
+| **演示**（看效果） | start-app.bat | 稳定、不装 livereload |
+
+### 前后端代码位置
+
+`
+app/backend/    ← FastAPI 后端（改 routers/ services/ main.py）
+app/frontend/   ← HTML 前端（改 *.html static/js/ static/css/）
+`
+
+改完保存，浏览器自动刷新。后端 .py 文件改了也能自动重载。
+
+### OpenAPI 文档
+
+http://localhost:8000/docs — 所有 30+ 路由的交互式文档。
+前端 JS 调 API 的路径和参数可以直接在这里看。
+
