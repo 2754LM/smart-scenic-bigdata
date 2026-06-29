@@ -44,15 +44,17 @@ COPY commons-lang-2.6.jar /opt/sqoop/lib/commons-lang-2.6.jar
 COPY starter.sh /opt/starter.sh
 COPY install-sqoop.sh /opt/install-sqoop.sh
 COPY sqoop-import-mysql.sh /opt/jobs/sqoop-import-mysql.sh
-RUN chmod +x /opt/starter.sh /opt/install-sqoop.sh /opt/jobs/sqoop-import-mysql.sh && \
-    mkdir -p /opt/jobs
+RUN mkdir -p /opt/jobs && \
+    for f in /opt/starter.sh /opt/install-sqoop.sh /opt/jobs/sqoop-import-mysql.sh; do \
+      tr -d '\015' < "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"; \
+    done && \
+    chmod +x /opt/starter.sh /opt/install-sqoop.sh /opt/jobs/sqoop-import-mysql.sh && \
+    echo "CRLF fixed"
 
 # ---- Step 5: Set up environment ----
-RUN cat > /etc/profile.d/sqoop_env.sh <<'EOF'
-export JAVA_HOME=/opt/jdk8
-export SQOOP_HOME=/opt/sqoop
-export HADOOP_HOME=/opt/hadoop
-export PATH=$JAVA_HOME/bin:$SQOOP_HOME/bin:$HADOOP_HOME/bin:$PATH
-EOF
+RUN printf 'export JAVA_HOME=/opt/jdk8\nexport SQOOP_HOME=/opt/sqoop\nexport HADOOP_HOME=/opt/hadoop\nexport PATH=$JAVA_HOME/bin:$SQOOP_HOME/bin:$HADOOP_HOME/bin:$PATH\n' > /etc/profile.d/sqoop_env.sh && \
+    tr -d '\015' < /etc/profile.d/sqoop_env.sh > /tmp/sqoop_env.tmp && \
+    mv /tmp/sqoop_env.tmp /etc/profile.d/sqoop_env.sh && \
+    echo "sqoop_env.sh CRLF fixed"
 
 USER hadoop
