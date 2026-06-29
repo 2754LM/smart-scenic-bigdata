@@ -111,6 +111,9 @@ def type_summary() -> List[Dict[str, Any]]:
 
     if attractions.empty:
         return []
+    # CSV loads 景点ID as int64, attractions has it as str - cast before merge
+    visits["景点ID"] = visits["景点ID"].astype(str)
+    cons["景点ID"] = cons["景点ID"].astype(str)
     merged = visits.merge(attractions[["景点ID", "类型"]], on="景点ID", how="left")
     cmerged = cons.merge(attractions[["景点ID", "类型"]], on="景点ID", how="left")
 

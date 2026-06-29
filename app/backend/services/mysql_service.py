@@ -223,6 +223,7 @@ def attraction_rank(limit: int = 10) -> List[Dict[str, Any]]:
         .sort_values("游客数", ascending=False)
         .head(limit)
     )
+    ranks["景点ID"] = ranks["景点ID"].astype(str)  # CSV loads as int64, merge key must match
     attractions = pd.DataFrame(list_attractions())
     merged = ranks.merge(attractions, on="景点ID", how="left")
     merged["景点名称"] = merged["景点名称"].fillna(merged["景点ID"].astype(str))
