@@ -18,7 +18,7 @@ PySpark MLlib 训练脚本 - 选题十八 智能景区管理系统
   HDFS  /scenic/models/                 (主存储)
   /shared/models/  (挂载卷，后端直接加载)
 
-架构说明（双轨）：
+双轨模式：
   训练用 PySpark MLlib（在容器内）→ 模型保存 HDFS + shared volume
   预测用 PySpark 加载（在后端）→ 实时 transform() 预测
 """

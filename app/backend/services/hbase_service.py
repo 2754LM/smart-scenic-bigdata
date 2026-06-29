@@ -3,7 +3,9 @@ HBase service - shell out to `hbase shell` via docker exec.
 
 Why docker exec? happybase 1.2 + thriftpy2 doesn't speak the binary protocol
 HBase 2.x's Thrift server uses by default (Bad version in readMessageBegin).
-See AGENTS.md 5.3 for the full debug story.
+happybase 1.2 + thriftpy2 doesn't speak the binary protocol
+HBase 2.x's Thrift server uses by default (Bad version in readMessageBegin).
+详见 README.md 第十节"设计权衡"。
 """
 from __future__ import annotations
 
