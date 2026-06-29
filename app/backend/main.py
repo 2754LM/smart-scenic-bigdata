@@ -75,6 +75,25 @@ def on_startup() -> None:
     except Exception as e:
         log.warning("PySpark model loading skipped: %s", e)
 
+    # === Kafka 后台 consumer：消费 → 写 HBase ===
+    try:
+        from services import kafka_consumer
+        kafka_consumer.start()
+        log.info("Kafka consumer thread started")
+    except Exception as e:
+        log.warning("Kafka consumer start failed: %s", e)
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    """关停 Kafka consumer 线程"""
+    try:
+        from services import kafka_consumer
+        kafka_consumer.stop()
+        log.info("Kafka consumer thread stopped")
+    except Exception as e:
+        log.warning("Kafka consumer stop failed: %s", e)
+
 
 @app.get("/api/predict/_engine")
 def predict_engine():

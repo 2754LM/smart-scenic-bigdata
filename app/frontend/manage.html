@@ -14,6 +14,7 @@
         <button class="btn" data-tab="consumption">消费</button>
         <button class="btn" data-tab="visits">游玩</button>
         <button class="btn" data-tab="hbase">HBase 实时</button>
+        <button class="btn" data-tab="kafka">Kafka 实时流</button>
       </div>
     </div>
 
@@ -106,5 +107,151 @@
   <script src="static/js/common.js"></script>
   <script src="static/js/api.js"></script>
   <script src="static/js/manage.js"></script>
+    <!-- Kafka 实时流 -->
+    <div id="tab-kafka" class="tab-content" style="display:none">
+      <div class="card">
+        <div class="card-title">Kafka 实时流</div>
+        <div class="card-body">
+          <p>流程: 前端 POST 发布 → Kafka → 后台 Consumer → HBase</p>
+
+          <h3>发布评论 (Kafka scenic_reviews topic)</h3>
+          <div class="form-row">
+            <label>游客 ID:</label>
+            <input type="text" id="kafka-vid" value="1001" />
+            <label>景点 ID:</label>
+            <input type="text" id="kafka-aid" value="1" />
+            <label>评分:</label>
+            <input type="number" id="kafka-rating" min="1" max="5" value="5" />
+          </div>
+          <div class="form-row">
+            <label>评论:</label>
+            <input type="text" id="kafka-comment" value="风景很美" style="width:300px" />
+            <button class="btn btn-primary" id="kafka-publish-review">发布评论</button>
+          </div>
+
+          <h3>发布实时事件 (Kafka scenic_events topic)</h3>
+          <div class="form-row">
+            <label>游客 ID:</label>
+            <input type="text" id="kafka-ev-vid" value="1001" />
+            <label>景点 ID:</label>
+            <input type="text" id="kafka-ev-aid" value="1" />
+            <label>事件类型:</label>
+            <select id="kafka-ev-type">
+              <option value="enter">入园 (enter)</option>
+              <option value="exit">离园 (exit)</option>
+              <option value="consume">消费 (consume)</option>
+            </select>
+            <button class="btn btn-primary" id="kafka-publish-event">发布事件</button>
+          </div>
+
+          <h3>Kafka 引擎状态</h3>
+          <pre id="kafka-status" style="background:#f5f5f5; padding:10px; border-radius:4px; overflow:auto; max-height:200px">加载中...</pre>
+
+          <h3>最近 HBase 实时事件 (验证 Consumer 已落库)</h3>
+          <div class="form-row">
+            <button class="btn" id="kafka-refresh">刷新 HBase 数据</button>
+          </div>
+          <div id="kafka-hbase-data"></div>
+        </div>
+      </div>
+    </div>
+
+<script>
+// === Kafka 实时流 ===
+
+document.addEventListener('DOMContentLoaded', () => {
+  // tab 切换
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('btn-primary'));
+      btn.classList.add('btn-primary');
+      const tab = btn.getAttribute('data-tab');
+      const target = document.getElementById('tab-' + tab);
+      if (target) target.style.display = '';
+    });
+  });
+
+  // 发布评论
+  const pubReviewBtn = document.getElementById('kafka-publish-review');
+  if (pubReviewBtn) {
+    pubReviewBtn.addEventListener('click', async () => {
+      const body = {
+        visitor_id:   document.getElementById('kafka-vid').value,
+        attraction_id: document.getElementById('kafka-aid').value,
+        rating:       parseInt(document.getElementById('kafka-rating').value),
+        comment:      document.getElementById('kafka-comment').value,
+      };
+      try {
+        const r = await fetch('/api/realtime/publish/review', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        alert('发布: ' + JSON.stringify(data, null, 2));
+        refreshKafkaStatus();
+      } catch (e) { alert('发布失败: ' + e); }
+    });
+  }
+
+  // 发布事件
+  const pubEventBtn = document.getElementById('kafka-publish-event');
+  if (pubEventBtn) {
+    pubEventBtn.addEventListener('click', async () => {
+      const body = {
+        visitor_id:   document.getElementById('kafka-ev-vid').value,
+        attraction_id: document.getElementById('kafka-ev-aid').value,
+        event_type:   document.getElementById('kafka-ev-type').value,
+      };
+      try {
+        const r = await fetch('/api/realtime/publish/event', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        alert('发布: ' + JSON.stringify(data, null, 2));
+        refreshKafkaStatus();
+      } catch (e) { alert('发布失败: ' + e); }
+    });
+  }
+
+  // 刷新状态
+  const refreshBtn = document.getElementById('kafka-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', refreshAll);
+  }
+
+  refreshAll();
+});
+
+async function refreshAll() {
+  await refreshKafkaStatus();
+  try {
+    const r = await fetch('/api/realtime/visit-recent?limit=15');
+    const data = await r.json();
+    const div = document.getElementById('kafka-hbase-data');
+    if (div && data.data && data.data.length) {
+      let html = '<table style="width:100%; border-collapse:collapse; margin-top:10px"><tr><th>row_key</th><th>visitor</th><th>attraction</th><th>action</th><th>ts</th></tr>';
+      data.data.forEach(d => {
+        html += '<tr><td>' + (d.row_key || '') + '</td><td>' + (d.visitor_id || '') + '</td><td>' + (d.scenic_id || d.attraction_id || '') + '</td><td>' + (d.action || d.event_type || '') + '</td><td>' + (d.ts || '') + '</td></tr>';
+      });
+      html += '</table>';
+      div.innerHTML = html;
+    } else if (div) {
+      div.innerHTML = '<p style="color:gray">暂无数据</p>';
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function refreshKafkaStatus() {
+  try {
+    const r = await fetch('/api/realtime/kafka/status');
+    const data = await r.json();
+    const el = document.getElementById('kafka-status');
+    if (el) el.textContent = JSON.stringify(data, null, 2);
+  } catch (e) { console.error(e); }
+}
+</script>
+
 </body>
 </html>

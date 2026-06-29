@@ -109,6 +109,62 @@ def list_reviews(scenic_id: str, limit: int = 50) -> List[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------
+# Kafka 消费者调用接口
+# ----------------------------------------------------------------------
+def put_review(visitor_id: str, attraction_id: str, rating: int, comment: str, ts: int = 0) -> Dict[str, Any]:
+    """Kafka 消费者调用：把一条评论消息写进 HBase scenic_reviews
+    跟 write_review 一样，但 row_key 包含 visitor_id 便于前缀查询
+    """
+    if not ts:
+        ts = now_ms()
+    row_key = f"{attraction_id}_{ts}_{visitor_id}"
+    create_check = (
+        'exists "scenic_reviews"\n'
+    )
+    out = hbase_shell(create_check)
+    if "does not exist" in out or "ERROR" in out:
+        hbase_shell('create "scenic_reviews", "cf"\n')
+    cmds = (
+        f'put "scenic_reviews", "{row_key}", "cf:visitor_id", "{visitor_id}"\n'
+        f'put "scenic_reviews", "{row_key}", "cf:attraction_id", "{attraction_id}"\n'
+        f'put "scenic_reviews", "{row_key}", "cf:rating", "{rating}"\n'
+        f'put "scenic_reviews", "{row_key}", "cf:comment", "{_escape(comment)}"\n'
+        f'put "scenic_reviews", "{row_key}", "cf:ts", "{ts}"\n'
+    )
+    hbase_shell(cmds)
+    return {"status": "ok", "row_key": row_key}
+
+
+def put_realtime_event(visitor_id: str, attraction_id: str, event_type: str, ts: int = 0) -> Dict[str, Any]:
+    """Kafka 消费者调用：把一条实时事件写进 HBase scenic_realtime
+    row_key: E{ts}_{visitor_id}_{attraction_id}（按时间倒序前缀查）
+    """
+    if not ts:
+        ts = now_ms()
+    row_key = f"E{ts}_{visitor_id}_{attraction_id}"
+    create_check = 'exists "scenic_realtime"\n'
+    out = hbase_shell(create_check)
+    if "does not exist" in out or "ERROR" in out:
+        hbase_shell('create "scenic_realtime", "cf"\n')
+    cmds = (
+        f'put "scenic_realtime", "{row_key}", "cf:visitor_id", "{visitor_id}"\n'
+        f'put "scenic_realtime", "{row_key}", "cf:attraction_id", "{attraction_id}"\n'
+        f'put "scenic_realtime", "{row_key}", "cf:event_type", "{event_type}"\n'
+        f'put "scenic_realtime", "{row_key}", "cf:ts", "{ts}"\n'
+        # 反向索引：按 attraction 查所有事件
+        f'put "scenic_realtime", "A{attraction_id}_{ts}", "cf:event", "{event_type}:{visitor_id}"\n'
+        f'put "scenic_realtime", "V{visitor_id}_{ts}", "cf:event", "{event_type}:{attraction_id}"\n'
+    )
+    hbase_shell(cmds)
+    return {"status": "ok", "row_key": row_key}
+
+
+def _escape(s: str) -> str:
+    """Escape hbase shell string values."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+# ----------------------------------------------------------------------
 # Realtime: visit-recent / visitor profile / attraction stat
 # ----------------------------------------------------------------------
 def recent_visits(limit: int = 20) -> List[Dict[str, Any]]:

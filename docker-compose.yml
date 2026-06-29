@@ -420,9 +420,13 @@ services:
       HADOOP_CONTAINER: hadoop-namenode
       HBASE_CONTAINER: hbase-master
       SPARK_CONTAINER: spark-master
+      # 容器内连 Kafka 用 PLAINTEXT listener（kafka-1:9092）
+      # 容器外开发模式用 localhost:19095（EXTERNAL listener）
+      KAFKA_BOOTSTRAP: "kafka-1:9092"
     depends_on:
       - mysql
       - hadoop-namenode
+      - kafka-1
     networks:
       - bigdata-net
 
