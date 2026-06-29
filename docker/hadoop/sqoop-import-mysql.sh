@@ -53,16 +53,9 @@ for t in "${TABLES[@]}"; do
     --username "${MYSQL_USER}" --password "${MYSQL_PASS}" \
     --table "${t}" \
     --target-dir "${HDFS_BASE}/${t}" \
-    --num-mappers 1 \
-    --fields-terminated-by "," \
-    --lines-terminated-by "\n" \
-    --input-null-string "\\N" \
-    --input-null-non-string "\\N" \
-    --null-string "\\N" \
-    --null-non-string "\\N" \
+    -m 1 \
     --delete-target-dir \
-    --as-textfile \
-    2>&1 | grep -E "(ERROR|Fatal|Error|records)" | head -5 || true
+    2>&1 | tail -5 || true
 
   # Verify
   ROWS=$(hdfs dfs -cat "${HDFS_BASE}/${t}/part-m-00000" 2>/dev/null | wc -l || echo 0)
