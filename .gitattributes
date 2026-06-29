@@ -1,0 +1,18 @@
+# Force LF for shell scripts (Linux VM requires LF)
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.py    text eol=lf
+*.sql   text eol=lf
+*.csv   text eol=lf
+Dockerfile text eol=lf
+
+# Allow CRLF for Windows-only files
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary
+*.jar   binary
+*.png   binary
+*.jpg   binary
+*.gz    binary
+*.zip   binary
