@@ -7,6 +7,24 @@
 
 ---
 
+## 〇、组件版本规范
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| Ubuntu | 16.04 | 原始方案基线 |
+| JDK | 1.8.0_162 | `jdk-8u162-linux-x64.tar.gz` |
+| Hadoop | 3.1.0 | HDFS + YARN |
+| ZooKeeper | 3.6.3 | `apache-zookeeper-3.6.3-bin.tar.gz` |
+| HBase | 2.4.11 | 2.x 稳定版 |
+| Kafka | 3.1.0 | `kafka_2.12-3.1.0.tgz`（Scala 2.12） |
+| Maven | 3.8.5 | `apache-maven-3.8.5-bin.tar.gz` |
+| Hive | 3.1.3 | 数仓 |
+| Spark | 3.1.0 | 计算引擎 |
+
+镜像 tag 在 `.env` 里集中管理，**改一个变量 = 全栈升级**。
+
+---
+
 ## 一、项目背景
 
 "智能景区管理系统"作业要求：
