@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <!-- HDFS 作为底层存储 -->
+    <property>
+        <name>hbase.rootdir</name>
+        <value>hdfs://hadoop-namenode:9000/hbase</value>
+    </property>
+
+    <!-- 完全分布式模式 -->
+    <property>
+        <name>hbase.cluster.distributed</name>
+        <value>true</value>
+    </property>
+
+    <!-- 使用外部 ZooKeeper -->
+    <property>
+        <name>hbase.zookeeper.quorum</name>
+        <value>zookeeper-1,zookeeper-2,zookeeper-3</value>
+    </property>
+    <property>
+        <name>hbase.zookeeper.property.clientPort</name>
+        <value>2181</value>
+    </property>
+
+    <!-- Master 配置 -->
+    <property>
+        <name>hbase.master</name>
+        <value>hbase-master:16000</value>
+    </property>
+    <property>
+        <name>hbase.master.info.bindAddress</name>
+        <value>0.0.0.0</value>
+    </property>
+    <property>
+        <name>hbase.master.info.port</name>
+        <value>16010</value>
+    </property>
+
+    <!-- RegionServer 配置 -->
+    <property>
+        <name>hbase.regionserver.info.bindAddress</name>
+        <value>0.0.0.0</value>
+    </property>
+    <property>
+        <name>hbase.regionserver.info.port</name>
+        <value>16030</value>
+    </property>
+
+    <!-- 副本数（与 HDFS 一致） -->
+    <property>
+        <name>dfs.replication</name>
+        <value>2</value>
+    </property>
+
+    <!-- 关闭自动管理 ZK -->
+    <property>
+        <name>hbase.zookeeper.property.dataDir</name>
+        <value>/tmp/zookeeper-hbase</value>
+    </property>
+
+    <!-- 内存调优（小集群） -->
+    <property>
+        <name>hbase.regionserver.global.memstore.size</name>
+        <value>0.4</value>
+    </property>
+    <property>
+        <name>hbase.regionserver.handler.count</name>
+        <value>30</value>
+    </property>
+</configuration>

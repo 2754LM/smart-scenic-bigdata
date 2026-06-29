@@ -1,0 +1,474 @@
+﻿# ============================================================
+# 閺呴缚鍏橀弲顖氬隘婢堆勬殶閹诡喖閽╅崣?- Docker Compose
+# 16 鐎圭懓娅掗敍姝畒sql, zookeeper鑴?, hadoop鑴?, hbase鑴?, kafka鑴?,
+#         spark鑴?, hive鑴?
+# 閸忋劑鍎存担璺ㄦ暏 Docker 鐎规ɑ鏌?+ Apache 鐎规ɑ鏌熼梹婊冨剼
+# ============================================================
+
+networks:
+  bigdata-net:
+    name: ${NETWORK_NAME}
+    driver: bridge
+
+volumes:
+  mysql-data:
+  namenode-data:
+  datanode1-data:
+  datanode2-data:
+  zk1-data:
+  zk2-data:
+  zk3-data:
+  hbase-master-data:
+  hbase-rs1-data:
+  hbase-rs2-data:
+  kafka1-data:
+  kafka2-data:
+  hive-server1-data:
+  hive-server2-data:
+  shared-data:
+
+services:
+  # ========================================================
+  # MySQL - 娑撴艾濮熼弫鐗堝祦 + Hive Metastore
+  # ========================================================
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    mem_limit: 1024m
+    hostname: mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    ports:
+      - "${PORT_MYSQL}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ========================================================
+  # ZooKeeper Ensemble 鑴?閿涘湒ocker 鐎规ɑ鏌?zookeeper:3.8閿?  # ========================================================
+  zookeeper-1:
+    image: zookeeper:${ZK_VERSION}
+    container_name: zookeeper-1
+    mem_limit: 512m
+    hostname: zookeeper-1
+    restart: unless-stopped
+    ports:
+      - "${PORT_ZK}:2181"
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=zookeeper-1:2888:3888 server.2=zookeeper-2:2888:3888 server.3=zookeeper-3:2888:3888
+      ZOO_4LW_COMMANDS_WHITELIST: "*"
+      ZOO_TICK_TIME: 2000
+      ZOO_STANDALONE_ENABLED: "false"
+      ZOO_INIT_LIMIT: 10
+      ZOO_SYNC_LIMIT: 5
+    volumes:
+      - zk1-data:/data
+      - ./config/zoo.cfg:/conf/zoo.cfg:ro
+    networks:
+      - bigdata-net
+
+  zookeeper-2:
+    image: zookeeper:${ZK_VERSION}
+    container_name: zookeeper-2
+    mem_limit: 512m
+    hostname: zookeeper-2
+    restart: unless-stopped
+    environment:
+      ZOO_MY_ID: 2
+      ZOO_SERVERS: server.1=zookeeper-1:2888:3888 server.2=zookeeper-2:2888:3888 server.3=zookeeper-3:2888:3888
+      ZOO_4LW_COMMANDS_WHITELIST: "*"
+      ZOO_TICK_TIME: 2000
+      ZOO_STANDALONE_ENABLED: "false"
+      ZOO_INIT_LIMIT: 10
+      ZOO_SYNC_LIMIT: 5
+    volumes:
+      - zk2-data:/data
+      - ./config/zoo.cfg:/conf/zoo.cfg:ro
+    networks:
+      - bigdata-net
+
+  zookeeper-3:
+    image: zookeeper:${ZK_VERSION}
+    container_name: zookeeper-3
+    mem_limit: 512m
+    hostname: zookeeper-3
+    restart: unless-stopped
+    environment:
+      ZOO_MY_ID: 3
+      ZOO_SERVERS: server.1=zookeeper-1:2888:3888 server.2=zookeeper-2:2888:3888 server.3=zookeeper-3:2888:3888
+      ZOO_4LW_COMMANDS_WHITELIST: "*"
+      ZOO_TICK_TIME: 2000
+      ZOO_STANDALONE_ENABLED: "false"
+      ZOO_INIT_LIMIT: 10
+      ZOO_SYNC_LIMIT: 5
+    volumes:
+      - zk3-data:/data
+      - ./config/zoo.cfg:/conf/zoo.cfg:ro
+    networks:
+      - bigdata-net
+
+  # ========================================================
+  # Hadoop Cluster: 1 NameNode + 2 DataNode
+  # ========================================================
+  hadoop-namenode:
+    build:
+      context: ./docker/hadoop
+      dockerfile: Dockerfile
+    image: smart-scenic/hadoop:custom
+    container_name: hadoop-namenode
+    mem_limit: 1536m
+    hostname: hadoop-namenode
+    restart: unless-stopped
+    command:
+      - /bin/bash
+      - -c
+      - |
+        chmod +x /opt/starter.sh && /opt/starter.sh
+    ports:
+      - "${PORT_NAMENODE_WEB}:9870"
+      - "${PORT_YARN_WEB}:8088"
+      - "${PORT_HADOOP_NN_RPC}:9000"
+    environment:
+      HADOOP_HOME: /opt/hadoop
+      JAVA_HOME: /opt/jdk8
+      HADOOP_NAMENODE_OPTS: "-Xmx1500m"
+      YARN_RESOURCEMANAGER_OPTS: "-Xmx1024m"
+      YARN_NODEMANAGER_OPTS: "-Xmx1024m"
+    volumes:
+      - ./config/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./config/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
+      - ./config/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./config/hadoop/workers:/opt/hadoop/etc/hadoop/workers:ro
+      - namenode-data:/data
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://hadoop-namenode:9870/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  hadoop-datanode-1:
+    image: apache/hadoop:${HADOOP_VERSION}
+    container_name: hadoop-datanode-1
+    mem_limit: 1024m
+    hostname: hadoop-datanode-1
+    restart: unless-stopped
+    command:
+      - /bin/bash
+      - -c
+      - "mkdir -p /data/dfs/data && hdfs datanode"
+    depends_on:
+      hadoop-namenode:
+        condition: service_started
+    environment:
+      HADOOP_HOME: /opt/hadoop
+      JAVA_HOME: /usr/lib/jvm/jre
+      HADOOP_DATANODE_OPTS: "-Xmx800m"
+    volumes:
+      - ./config/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./config/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
+      - ./config/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./config/hadoop/workers:/opt/hadoop/etc/hadoop/workers:ro
+      - datanode1-data:/data
+    networks:
+      - bigdata-net
+
+  hadoop-datanode-2:
+    image: apache/hadoop:${HADOOP_VERSION}
+    container_name: hadoop-datanode-2
+    mem_limit: 1024m
+    hostname: hadoop-datanode-2
+    restart: unless-stopped
+    command:
+      - /bin/bash
+      - -c
+      - "mkdir -p /data/dfs/data && hdfs datanode"
+    depends_on:
+      hadoop-namenode:
+        condition: service_started
+    environment:
+      HADOOP_HOME: /opt/hadoop
+      JAVA_HOME: /usr/lib/jvm/jre
+      HADOOP_DATANODE_OPTS: "-Xmx800m"
+    volumes:
+      - ./config/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./config/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
+      - ./config/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./config/hadoop/workers:/opt/hadoop/etc/hadoop/workers:ro
+      - datanode2-data:/data
+    networks:
+      - bigdata-net
+
+  # ========================================================
+  # HBase: 1 Master + 2 RegionServer閿涘湚arisekhon 闂€婊冨剼閿?  # ========================================================
+  hbase-master:
+    image: harisekhon/hbase:${HBASE_VERSION}
+    container_name: hbase-master
+    mem_limit: 1024m
+    hostname: hbase-master
+    restart: unless-stopped
+    command: ["master"]
+    depends_on:
+      - zookeeper-1
+      - zookeeper-2
+      - zookeeper-3
+      - hadoop-namenode
+    ports:
+      - "${PORT_HBASE_WEB}:16010"
+      - "${PORT_HBASE_MASTER_RPC}:16000"
+      - "${PORT_HBASE_RS_RPC}:16020"
+      - "${PORT_HBASE_RS_WEB}:16030"
+    environment:
+      HBASE_MANAGES_ZK: "false"
+      JAVA_HOME: /usr/lib/jvm/java-1.8-openjdk
+      HBASE_MASTER_OPTS: "-Xmx1024m"
+    volumes:
+      - ./config/hbase/hbase-site.xml:/hbase/conf/hbase-site.xml:ro
+      - ./config/hbase/regionservers:/hbase/conf/regionservers:ro
+      - hbase-master-data:/hbase-data
+    networks:
+      - bigdata-net
+
+  hbase-regionserver-1:
+    image: harisekhon/hbase:${HBASE_VERSION}
+    container_name: hbase-regionserver-1
+    mem_limit: 1280m
+    hostname: hbase-regionserver-1
+    restart: unless-stopped
+    command: ["regionserver"]
+    depends_on:
+      - hbase-master
+    environment:
+      HBASE_MANAGES_ZK: "false"
+      JAVA_HOME: /usr/lib/jvm/java-1.8-openjdk
+      HBASE_REGIONSERVER_OPTS: "-Xmx1280m"
+    volumes:
+      - ./config/hbase/hbase-site.xml:/hbase/conf/hbase-site.xml:ro
+      - ./config/hbase/regionservers:/hbase/conf/regionservers:ro
+      - hbase-rs1-data:/hbase-data
+    networks:
+      - bigdata-net
+
+  hbase-regionserver-2:
+    image: harisekhon/hbase:${HBASE_VERSION}
+    container_name: hbase-regionserver-2
+    mem_limit: 1280m
+    hostname: hbase-regionserver-2
+    restart: unless-stopped
+    command: ["regionserver"]
+    depends_on:
+      - hbase-master
+    environment:
+      HBASE_MANAGES_ZK: "false"
+      JAVA_HOME: /usr/lib/jvm/java-1.8-openjdk
+      HBASE_REGIONSERVER_OPTS: "-Xmx1280m"
+    volumes:
+      - ./config/hbase/hbase-site.xml:/hbase/conf/hbase-site.xml:ro
+      - ./config/hbase/regionservers:/hbase/conf/regionservers:ro
+      - hbase-rs2-data:/hbase-data
+    networks:
+      - bigdata-net
+
+  # ========================================================
+  # Kafka KRaft Cluster 鑴?閿涘湏pache 鐎规ɑ鏌熼敍?  # ========================================================
+  kafka-1:
+    image: apache/kafka:${KAFKA_VERSION}
+    container_name: kafka-1
+    mem_limit: 1024m
+    hostname: kafka-1
+    restart: unless-stopped
+    ports:
+      - "${PORT_KAFKA}:9092"
+      - "${PORT_KAFKA_EXTERNAL}:9094"
+    environment:
+      KAFKA_NODE_ID: ${KAFKA_NODE_ID_1}
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-1:9092,EXTERNAL://localhost:19095"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka1-data:/var/lib/kafka/data
+    networks:
+      - bigdata-net
+
+  kafka-2:
+    image: apache/kafka:${KAFKA_VERSION}
+    container_name: kafka-2
+    mem_limit: 1024m
+    hostname: kafka-2
+    restart: unless-stopped
+    ports: []  # 娑撳秴顕径鏍ㄦ瘹闂囪绱濇禒鍛存肠缂囥倕鍞撮柅姘繆
+    environment:
+      KAFKA_NODE_ID: ${KAFKA_NODE_ID_2}
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-2:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka2-data:/var/lib/kafka/data
+    networks:
+      - bigdata-net
+
+  # ========================================================
+  # Spark Standalone Cluster: 1 Master + 1 Worker閿涘湏pache 鐎规ɑ鏌熼敍?  # ========================================================
+  spark-master:
+    image: apache/spark:${SPARK_VERSION}
+    container_name: spark-master
+    mem_limit: 1024m
+    hostname: spark-master
+    restart: unless-stopped
+    command: ["/bin/bash", "-c", "mkdir -p /tmp/spark-events && /opt/spark/sbin/start-master.sh && tail -f /dev/null"]
+    ports:
+      - "${PORT_SPARK_WEB}:8080"
+      - "${PORT_SPARK_RPC}:7077"
+    environment:
+      JAVA_HOME: /opt/java/openjdk
+      SPARK_MASTER_HOST: spark-master
+    volumes:
+      - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./config/spark/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
+      - ./config/spark/workers:/opt/spark/conf/workers:ro
+      - shared-data:/shared
+    networks:
+      - bigdata-net
+
+  spark-worker-1:
+    image: apache/spark:${SPARK_VERSION}
+    container_name: spark-worker-1
+    mem_limit: 1280m
+    hostname: spark-worker-1
+    restart: unless-stopped
+    depends_on:
+      - spark-master
+    command: ["/bin/bash", "-c", "mkdir -p /tmp/spark-events && /opt/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"]
+    environment:
+      JAVA_HOME: /opt/java/openjdk
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_WORKER_CORES: 2
+      SPARK_MASTER_URL: spark://spark-master:7077
+    volumes:
+      - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./config/spark/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
+      - ./config/spark/workers:/opt/spark/conf/workers:ro
+      - shared-data:/shared
+    networks:
+      - bigdata-net
+
+  # ========================================================
+  # Hive Server with MySQL JDBC driver baked in (custom Dockerfile)
+  # ========================================================
+  hive-server-1:
+    build:
+      context: ./docker/hive
+      dockerfile: Dockerfile
+    image: smart-scenic/hive:custom
+    container_name: hive-server-1
+    mem_limit: 1024m
+    hostname: hive-server-1
+    restart: unless-stopped
+    depends_on:
+      - mysql
+      - hadoop-namenode
+    ports:
+      - "${PORT_HIVE}:10000"
+      - "${PORT_HIVE_WEB}:10002"
+    environment:
+      SERVICE_NAME: hiveserver2
+      HIVE_CONF_DIR: /opt/hive/conf
+      HADOOP_HOME: /opt/hadoop
+      SKIP_SCHEMA_INIT: "true"
+      IS_RESUME: "true"
+      JAVA_HOME: /usr/local/openjdk-8
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        export JAVA_HOME=/usr/local/openjdk-8
+        if [ ! -f /opt/hive/conf/.schema_initialized ]; then
+          /opt/hive/bin/schematool -dbType mysql -initSchema && touch /opt/hive/conf/.schema_initialized
+        fi
+        exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
+    volumes:
+      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
+      - hive-server1-data:/opt/hive/conf
+    networks:
+      - bigdata-net
+
+  hive-server-2:
+    build:
+      context: ./docker/hive
+      dockerfile: Dockerfile
+    image: smart-scenic/hive:custom
+    container_name: hive-server-2
+    mem_limit: 1024m
+    hostname: hive-server-2
+    restart: unless-stopped
+    depends_on:
+      - mysql
+      - hadoop-namenode
+      - hive-server-1
+    ports:
+      - "${PORT_HIVE_2}:10000"
+      - "${PORT_HIVE_2_WEB}:10002"
+    environment:
+      SERVICE_NAME: hiveserver2
+      HIVE_CONF_DIR: /opt/hive/conf
+      HADOOP_HOME: /opt/hadoop
+      SKIP_SCHEMA_INIT: "true"
+      IS_RESUME: "true"
+      JAVA_HOME: /usr/local/openjdk-8
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        export JAVA_HOME=/usr/local/openjdk-8
+        exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
+    volumes:
+      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
+      - hive-server2-data:/opt/hive/conf
+    networks:
+      - bigdata-net
+
+
+
+
+
