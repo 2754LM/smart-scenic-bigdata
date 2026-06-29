@@ -65,6 +65,26 @@ def on_startup() -> None:
     except Exception as e:
         log.warning("HBase seed skipped: %s", e)
 
+    # === 双轨 ML 模式：尝试加载 PySpark 训练好的模型 ===
+    try:
+        from services import pyspark_loader
+        if pyspark_loader.load_all():
+            log.info("PySpark models loaded (dual-track mode active)")
+        else:
+            log.info("PySpark models not available, using sklearn fallback")
+    except Exception as e:
+        log.warning("PySpark model loading skipped: %s", e)
+
+
+@app.get("/api/predict/_engine")
+def predict_engine():
+    """返回当前 predict 引擎状态（pyspark vs sklearn）"""
+    try:
+        from services import pyspark_loader
+        return pyspark_loader.get_status()
+    except ImportError:
+        return {"pyspark_loaded": False, "error": "pyspark_loader not available"}
+
 
 @app.get("/")
 def root() -> HTMLResponse:

@@ -395,6 +395,38 @@ services:
       - bigdata-net
 
   # ========================================================
+  # Demo Backend (FastAPI) - dual-track ML mode
+  # Loads PySpark models trained by spark-master (from /shared/models/)
+  # ========================================================
+  demo-backend:
+    image: python:3.10-slim
+    container_name: demo-backend
+    mem_limit: 1280m
+    hostname: demo-backend
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/backend:/app
+      - shared-data:/shared:ro
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYSPARK_MODELS_DIR: /shared/models
+      USE_PYSPARK_MODELS: "true"
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      HADOOP_CONTAINER: hadoop-namenode
+      HBASE_CONTAINER: hbase-master
+      SPARK_CONTAINER: spark-master
+    depends_on:
+      - mysql
+      - hadoop-namenode
+    networks:
+      - bigdata-net
+
+  # ========================================================
   # Hive Server with MySQL JDBC driver baked in (custom Dockerfile)
   # ========================================================
   hive-server-1:

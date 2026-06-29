@@ -72,6 +72,15 @@ HIVE_DB = os.getenv("HIVE_DB", "scenic_ext")
 MODELS_DIR = JOBS_DIR / "ml" / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+# PySpark MLlib 训练输出的模型（双轨模式 - 推荐）
+# 在 spark-master 容器内跑 spark-submit ml-train.py 后，模型会同时保存到：
+#   - HDFS /scenic/models/  (主存储)
+#   - /shared/models/       (通过 shared volume 挂载)
+# backend 优先用这里加载的 PySpark PipelineModel 做预测（性能+一致性）
+PYSPARK_MODELS_DIR = os.getenv("PYSPARK_MODELS_DIR", "/shared/models")
+# 双轨开关（True: 优先用 PySpark 训练好的模型，False: 后端自己用 sklearn 训练）
+USE_PYSPARK_MODELS = os.getenv("USE_PYSPARK_MODELS", "true").lower() in ("1", "true", "yes")
+
 # ----------------------------------------------------------------------
 # Server
 # ----------------------------------------------------------------------

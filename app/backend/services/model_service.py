@@ -296,6 +296,49 @@ def predict(task: str, features: Dict[str, Any]) -> Dict[str, Any]:
                 break
     model, scaler, cols = _MODELS[key]
 
+    # === 双轨模式：优先用 PySpark 训练好的模型 ===
+    # PySpark 模型特征列是 ["age","purchase_count","avg_amount","visit_count",
+    #                          "avg_duration","unique_attractions"]
+    # sklearn 模型的特征列可能不一样（带 one-hot 编码等）
+    # 所以这里用 try/except：PySpark 成功就用它，失败 fallback 到 sklearn
+    pyspark_used = False
+    try:
+        from services.pyspark_loader import predict as ps_predict
+        ps_features = {
+            "age":                 float(features.get("age", features.get("年龄", 30))),
+            "purchase_count":      float(features.get("purchase_count", 0)),
+            "avg_amount":          float(features.get("avg_amount", 0)),
+            "visit_count":         float(features.get("visit_count", 0)),
+            "avg_duration":        float(features.get("avg_duration", 0)),
+            "unique_attractions":  float(features.get("unique_attractions", 0)),
+        }
+        if task == "consumption_amount":
+            from services.pyspark_loader import predict_regression as ps_reg
+            r = ps_reg("consumption_amount", ps_features)
+        elif task == "high_value_visitor":
+            from services.pyspark_loader import predict_classification as ps_clf
+            r = ps_clf(ps_features)
+        else:
+            r = None
+        if r is not None:
+            val = r["prediction"]
+            family = r.get("model", family)  # 用 PySpark 实际选的模型
+            pyspark_used = True
+            out: Dict[str, Any] = {
+                "type": task,
+                "prediction": round(val, 2),
+                "model": family + " (PySpark)",
+                "engine": "pyspark",
+                "timestamp": now_iso(),
+            }
+            if task == "high_value_visitor":
+                out["probability"] = round(float(val), 4)
+                out["label"] = r.get("label", "高消费" if val > 0.5 else "普通")
+            return out
+    except Exception as e:
+        log.debug("PySpark predict failed, fallback to sklearn: %s", e)
+
+    # === Fallback: sklearn 模型 ===
     # Build feature vector using the SAME columns the model was trained on.
     row: List[float] = []
     for c in cols:
@@ -308,7 +351,8 @@ def predict(task: str, features: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "type": task,
         "prediction": round(val, 2),
-        "model": family,
+        "model": family + (" (sklearn fallback)" if pyspark_used is False else " (sklearn)"),
+        "engine": "sklearn",
         "timestamp": now_iso(),
     }
     if task == "high_value_visitor":

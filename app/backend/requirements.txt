@@ -6,3 +6,5 @@ pydantic==2.6.1
 pandas==2.1.4
 numpy==1.26.2
 scikit-learn==1.3.2
+# PySpark for loading models trained by PySpark MLlib
+pyspark==3.4.1
