@@ -5,6 +5,11 @@
 -- Data loading is done by scripts/load-csv-to-mysql.py
 -- ============================================================
 
+-- Fix MySQL 8.0 init script encoding (entrypoint defaults to latin1)
+SET NAMES utf8mb4;
+SET character_set_client = utf8mb4;
+SET character_set_connection = utf8mb4;
+
 USE scenic;
 
 -- ============================================================

@@ -9,12 +9,13 @@
 # ============================================================
 set -e
 
-source /etc/profile.d/sqoop_env.sh 2>/dev/null || {
-  export JAVA_HOME=/opt/jdk8
-  export SQOOP_HOME=/opt/sqoop
-  export HADOOP_HOME=/opt/hadoop
-  export PATH=$JAVA_HOME/bin:$SQOOP_HOME/bin:$HADOOP_HOME/bin:$PATH
-}
+# Explicit PATH (non-login bash)
+export JAVA_HOME=/opt/jdk8
+export SQOOP_HOME=/opt/sqoop
+export HADOOP_HOME=/opt/hadoop
+export PATH=$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$SQOOP_HOME/bin:$PATH
+
+source /etc/profile.d/sqoop_env.sh 2>/dev/null || true
 
 MYSQL_HOST="${MYSQL_HOST:-mysql}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
