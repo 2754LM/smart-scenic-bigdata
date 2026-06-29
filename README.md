@@ -54,8 +54,7 @@ copy "D:\选题与数据相关资料\数据集\Topic 18\*.csv" data\raw_data\
 ### 1.3 启动 Web 应用
 
 ```bat
-scripts\install-deps.bat   REM 首次：装 Python 依赖
-scripts\start-app.bat      REM 启动 Web（自动检测 + 智能双轨）
+scripts\scripts\start-app.bat      REM 启动 Web（自动装依赖 + 智能双轨）
 ```
 
 启动后浏览器打开：
@@ -153,14 +152,12 @@ smart-scenic-bigdata/
 │   ├── frontend/              4 页 Web 前端（HTML + JS + CSS）
 │   └── jobs/                  Spark / Hive / PySpark 训练脚本
 │
-├── scripts/                   运维脚本（Windows .bat）
-│   ├── start.bat              一键启动大数据平台
-│   ├── start-app.bat          一键启动 Web 应用
-│   ├── install-deps.bat       装 Python 依赖
-│   ├── stop.bat               停止所有容器
-│   ├── reset.bat              完全重置（清空数据）
-│   ├── verify.bat             38 项组件连通性测试
-│   └── test-e2e.bat           7 大业务场景端到端测试
+├── scripts/                   运维脚本（5 个，Windows .bat）
+│   ├── start.bat              1. 启动大数据平台（17 容器）
+│   ├── start-app.bat          2. 启动 Web 应用（自动装依赖）
+│   ├── stop.bat               3. 停止所有容器
+│   ├── reset.bat              4. 完全重置（清空数据）
+│   └── test-e2e.bat           5. 端到端业务测试（CI 用）
 │
 ├── docs/
 │   ├── 作业要求.md            选题要求 + 作业规范（合并）
@@ -401,6 +398,28 @@ scripts\start.bat
 | 6.5 可视化 | 4 页前端 + Kafka 实时推送 | ✅ |
 
 详细作业要求见 [docs/作业要求.md](docs/作业要求.md)。
+
+---
+
+## 附：scripts 速查表
+
+5 个脚本，**用户日常只用前 3 个**：
+
+| 脚本 | 用途 | 何时用 |
+|------|------|--------|
+| `start.bat` | 启动 17 容器大数据平台 | 每天开机第一次 |
+| `start-app.bat` | 启动 Web 应用（自动装依赖）| 想用 Web 时 |
+| `stop.bat` | 停止所有容器 | 不用时 |
+| `reset.bat` | 完全重置（清空数据）| 重新开始 |
+| `test-e2e.bat` | 端到端业务测试 | CI / 调试 |
+
+**典型工作流**：
+```bat
+scripts\start.bat          REM 第一次
+scripts\start-app.bat      REM 启动 Web
+REM 浏览器 http://localhost:8080 玩耍
+scripts\stop.bat           REM 关闭
+```
 
 ---
 
