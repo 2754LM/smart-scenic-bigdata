@@ -71,3 +71,6 @@ docker/hive/*.bak
 
 # 容器内的临时文件
 *.pid
+
+# IDE build output
+out/
