@@ -1,4 +1,4 @@
-# Force LF for shell scripts (Linux VM requires LF)
+# Force LF for shell scripts (Linux containers require LF)
 *.sh    text eol=lf
 *.bash  text eol=lf
 *.py    text eol=lf

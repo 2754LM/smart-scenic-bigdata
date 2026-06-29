@@ -9,7 +9,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-# Defaults match docker-compose.yml; override via env on VM
+# Defaults match docker-compose.yml; override via env
 export DATA_DIR="${DATA_DIR:-$PROJECT_ROOT/data/raw_data}"
 export MYSQL_HOST="${MYSQL_HOST:-localhost}"
 export MYSQL_PORT="${MYSQL_PORT:-13306}"
@@ -26,7 +26,7 @@ if [ -f "$PROJECT_ROOT/app/backend/.venv/Scripts/activate" ]; then
     # Windows-style venv (local dev)
     source "$PROJECT_ROOT/app/backend/.venv/Scripts/activate"
 elif [ -f "$PROJECT_ROOT/app/backend/.venv/bin/activate" ]; then
-    # Linux-style venv (VM)
+    # Linux/macOS-style venv
     source "$PROJECT_ROOT/app/backend/.venv/bin/activate"
 elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
     source "$PROJECT_ROOT/.venv/bin/activate"

@@ -68,35 +68,33 @@ git merge feature/data-pipeline --no-ff -m "Merge feature/data-pipeline (P0: dat
 git push origin master
 ```
 
-### 2.4 VM 部署命令（参考 [docs/P0-数据层交付.md](P0-数据层交付.md) 第三节）
+### 2.4 Docker 部署命令（参考 [docs/P0-数据层交付.md](P0-数据层交付.md) 第三节）
+
+> 本项目用 Docker Compose 部署，**不需要单独的 VM**，本机执行即可。
 
 ```bash
-# A. fetch + 切分支
-git fetch origin
-git checkout feature/data-pipeline
-chmod +x scripts/load-csv-to-mysql.sh docker/hadoop/sqoop-import-mysql.sh
+# A. 准备 CSV（不进 git，从作业题数据集拷贝 4 个 CSV）
+mkdir -p data/raw_data
+# 从 D:\选题与数据相关资料\数据集\Topic 18\ 复制 4 个 CSV 进来
 
-# B. 重置 MySQL（新 DDL）
+# B. 重置 MySQL（新 DDL 生效）
 docker compose down mysql
 docker volume rm smart-scenic-bigdata_mysql-data
 docker compose up -d mysql
 sleep 30
 
-# C. 同步 data/raw_data/*.csv 到 VM（如果 data/ 没在 git 里）
-#    方法: scp -r data/raw_data user@vm:/path/to/proj/data/
-
-# D. 加载 CSV
+# C. 加载 CSV 到 MySQL
 pip install pymysql
-./scripts/load-csv-to-mysql.sh
+python scripts/load-csv-to-mysql.py
 
-# E. 重建 hadoop 镜像（新 sqoop 脚本）
+# D. 重建 hadoop 镜像（新 sqoop 脚本烤进镜像）
 docker compose build hadoop-namenode
 docker compose up -d --force-recreate hadoop-namenode
 
-# F. 触发 Sqoop
+# E. 触发 Sqoop
 docker exec hadoop-namenode bash /opt/jobs/sqoop-import-mysql.sh
 
-# G. 验证
+# F. 验证
 docker exec mysql mysql -uroot -proot123 -e "
   SELECT 't_attraction' t, COUNT(*) n FROM t_attraction UNION
   SELECT 't_visitor', COUNT(*) FROM t_visitor UNION

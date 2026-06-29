@@ -157,7 +157,7 @@ async function loadFpGrowth() {
   try {
     const r = await API.analysisFpGrowth();
     const data = r.data || [];
-    if (!data.length) { renderEmpty(el, '暂无关联规则（请先在 VM 上跑 P1.2 FPGrowth）'); return; }
+    if (!data.length) { renderEmpty(el, '暂无关联规则（请先跑 Spark FPGrowth 关联规则分析）'); return; }
     el.innerHTML = `
       <table>
         <thead><tr>

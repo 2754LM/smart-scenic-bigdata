@@ -1,18 +1,15 @@
 """
 Load CSV files from data/raw_data/ into MySQL scenic database.
-Cross-platform (Windows local dev + Linux VM prod), env-driven configuration.
+Cross-platform (Windows / Linux / macOS), env-driven configuration.
 
 Usage:
-    # Local (defaults work)
+    # Local (defaults work - connects to Docker MySQL on localhost:13306)
     python scripts/load-csv-to-mysql.py
 
-    # Custom paths
+    # Custom paths / connection
     DATA_DIR=/srv/scenic/data/raw_data \\
     MYSQL_HOST=mysql MYSQL_USER=root MYSQL_PASS=root123 \\
     python scripts/load-csv-to-mysql.py
-
-    # On the VM (assuming data/raw_data is sibling of scripts/)
-    ./scripts/load-csv-to-mysql.sh
 """
 import csv
 import os
