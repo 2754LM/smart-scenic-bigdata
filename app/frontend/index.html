@@ -1,267 +1,69 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<title>Smart Scenic BigData - Demo UI</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-<style>
-  body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 16px; background: #f5f7fa; }
-  h1 { margin: 0 0 12px; color: #2c3e50; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-  .card h2 { margin: 0 0 8px; font-size: 16px; color: #34495e; }
-  .card .src { font-size: 12px; color: #95a5a6; margin-bottom: 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 6px 8px; border-bottom: 1px solid #ecf0f1; text-align: left; }
-  th { background: #ecf0f1; }
-  button { background: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 8px; }
-  button:hover { background: #2980b9; }
-  button:disabled { background: #95a5a6; cursor: wait; }
-  input, select { padding: 6px 8px; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 13px; }
-  .log { background: #2c3e50; color: #ecf0f1; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 200px; overflow: auto; white-space: pre-wrap; }
-  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-  .stat { display: inline-block; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; margin-right: 4px; }
-  #chart { height: 320px; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>总览大屏 - 智能景区大数据平台</title>
+  <link rel="stylesheet" href="static/css/main.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
 </head>
 <body>
-
-<h1>🏞️ Smart Scenic BigData Platform - Demo UI</h1>
-
-<!-- Component flow diagram -->
-<div class="card" style="margin-bottom: 16px;">
-  <h2>📊 Component Flow</h2>
-  <div class="src">Demo 覆盖全部 8 个大数据组件</div>
-  <div style="font-family: monospace; font-size: 13px; background: #ecf0f1; padding: 12px; border-radius: 4px;">
-    [MySQL OLTP] ──Sqoop──&gt; [HDFS] ──Hive SQL──&gt; [Backend]<br>
-    [Kafka stream] ──&gt; [Backend API] ──write──&gt; [HBase NoSQL]<br>
-    [HDFS CSV] ──Spark SQL──&gt; [Backend] ──chart──&gt; [Frontend]
-  </div>
-</div>
-
-<!-- Top row: scenics from MySQL + Hive -->
-<div class="grid">
-  <div class="card">
-    <h2>📍 Scenic Spots (MySQL OLTP)</h2>
-    <div class="src">Source: MySQL &middot; <span class="stat">MySQL</span></div>
-    <button onclick="loadScenics()">Reload from MySQL</button>
-    <div id="scenics-mysql"></div>
-  </div>
-
-  <div class="card">
-    <h2>📍 Scenic Spots (Hive on HDFS)</h2>
-    <div class="src">Source: Hive &middot; <span class="stat">Hive</span> <span class="stat">HDFS</span></div>
-    <button onclick="loadScenicsHive()">Reload from Hive</button>
-    <div id="scenics-hive"></div>
-  </div>
-</div>
-
-<!-- Middle row: Sqoop + HDFS status -->
-<div class="grid" style="margin-top: 16px;">
-  <div class="card">
-    <h2>🔄 Sqoop: MySQL &rarr; HDFS</h2>
-    <div class="src">Trigger batch import (作业 6.3)</div>
-    <div class="row">
-      <button onclick="triggerSqoop()">▶ Trigger Sqoop Import</button>
-      <button onclick="loadHdfsStatus()">📂 Show HDFS Files</button>
+  <div class="container">
+    <!-- KPI 卡片 -->
+    <div class="kpi-grid" id="kpi-grid">
+      <div class="kpi"><div class="label">游客总数</div><div class="value" id="kpi-visitors">--</div></div>
+      <div class="kpi kpi-1"><div class="label">景点总数</div><div class="value" id="kpi-attractions">--</div></div>
+      <div class="kpi kpi-2"><div class="label">消费总额</div><div class="value" id="kpi-consume-total">--</div></div>
+      <div class="kpi kpi-3"><div class="label">游玩总次数</div><div class="value" id="kpi-visits">--</div></div>
+      <div class="kpi kpi-4"><div class="label">平均消费</div><div class="value" id="kpi-avg-consume">--</div></div>
+      <div class="kpi kpi-1"><div class="label">平均游玩时长</div><div class="value" id="kpi-avg-duration">--</div></div>
+      <div class="kpi kpi-2"><div class="label">消费笔数</div><div class="value" id="kpi-consume-count">--</div></div>
+      <div class="kpi kpi-3"><div class="label">日均游客</div><div class="value" id="kpi-daily-avg">--</div></div>
     </div>
-    <div class="log" id="sqoop-log">点击 "Trigger" 启动批量导入...</div>
-  </div>
 
-  <div class="card">
-    <h2>📈 Spark Stats (Visit Counts)</h2>
-    <div class="src">Run Spark SQL aggregation on HDFS data</div>
-    <div class="row">
-      <button onclick="runSparkStats()">⚡ Run Spark Job</button>
+    <!-- 时序图 -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">日游客趋势 <span class="subtitle">2023-01-01 ~ 2023-12-31</span></div>
+        <div class="card-body" id="chart-visitor-trend" style="height: 280px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">日消费趋势 <span class="subtitle">单位: 元</span></div>
+        <div class="card-body" id="chart-consume-trend" style="height: 280px"></div>
+      </div>
     </div>
-    <div id="chart"></div>
-  </div>
-</div>
 
-<!-- Bottom row: HBase + Kafka -->
-<div class="grid" style="margin-top: 16px;">
-  <div class="card">
-    <h2>💬 Write Review &rarr; HBase</h2>
-    <div class="src">Real-time NoSQL write (作业 6.5 实时存储)</div>
-    <div class="row">
-      <label>Scenic:</label>
-      <select id="rb-scenic">S001,S002,S003,S004,S005,S006,S007,S008,S009,S010
-        <option>S001</option><option>S002</option><option>S003</option>
-        <option>S004</option><option>S005</option>
-      </select>
-      <label>Visitor:</label><input id="rb-visitor" value="V001" style="width:80px">
-      <label>Rating:</label><input id="rb-rating" value="5" style="width:50px">
+    <!-- 中部 3 图表 -->
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-title">景点热度 TOP 10</div>
+        <div class="card-body" id="chart-attraction-rank" style="height: 300px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">24h 时段分布</div>
+        <div class="card-body" id="chart-hourly" style="height: 300px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">游客年龄×性别</div>
+        <div class="card-body" id="chart-age-gender" style="height: 300px"></div>
+      </div>
     </div>
-    <div class="row">
-      <input id="rb-comment" placeholder="Comment" style="flex:1; min-width:200px">
-      <button onclick="writeReviewHbase()">Write to HBase</button>
+
+    <!-- 底部 -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">地区分布 TOP 20</div>
+        <div class="card-body" id="chart-region" style="height: 280px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">景点类型汇总</div>
+        <div class="card-body" id="chart-type-summary" style="height: 280px"></div>
+      </div>
     </div>
-    <div class="row">
-      <label>Scenic to scan:</label>
-      <input id="rb-scan" value="S001" style="width:80px">
-      <button onclick="scanHbase()">Scan HBase</button>
-    </div>
-    <div id="hbase-result"></div>
   </div>
 
-  <div class="card">
-    <h2>🌊 Kafka: Real-time Stream</h2>
-    <div class="src">Async message queue (作业 6.4 流处理)</div>
-    <div class="row">
-      <input id="kf-scenic" value="S002" style="width:80px">
-      <input id="kf-visitor" value="V005" style="width:80px">
-      <input id="kf-rating" value="4" style="width:50px">
-      <input id="kf-comment" value="实时评论测试" style="flex:1; min-width:200px">
-      <button onclick="publishKafka()">Publish</button>
-    </div>
-    <div class="row">
-      <button onclick="consumeKafka()">Consume Messages</button>
-    </div>
-    <div class="log" id="kafka-log">消息流...</div>
-  </div>
-</div>
-
-<script>
-const API = "http://localhost:8000";
-
-async function api(path, opts={}) {
-  const r = await fetch(API + path, opts);
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(t);
-  }
-  return r.json();
-}
-
-function tableHtml(rows, cols) {
-  if (!rows || !rows.length) return '<p>(empty)</p>';
-  cols = cols || Object.keys(rows[0]);
-  let h = '<table><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
-  for (const r of rows) {
-    h += '<tr>' + cols.map(c => `<td>${r[c] ?? ''}</td>`).join('') + '</tr>';
-  }
-  return h + '</table>';
-}
-
-async function loadScenics() {
-  const d = await api('/api/scenics');
-  document.getElementById('scenics-mysql').innerHTML =
-    `<p><b>${d.count}</b> rows from MySQL</p>` + tableHtml(d.data);
-}
-
-async function loadScenicsHive() {
-  try {
-    const d = await api('/api/scenics-hive');
-    document.getElementById('scenics-hive').innerHTML =
-      `<p><b>${d.data.length}</b> rows from Hive (HDFS)</p>` + tableHtml(d.data, d.cols);
-  } catch (e) {
-    document.getElementById('scenics-hive').innerHTML =
-      `<p style="color:#e74c3c">Hive 暂未建表: ${e.message}</p>`;
-  }
-}
-
-async function triggerSqoop() {
-  const log = document.getElementById('sqoop-log');
-  log.textContent = '⏳ Sqoop import running (1-2 min)...';
-  try {
-    const d = await api('/api/trigger-sqoop', {method:'POST'});
-    log.textContent = '✅ DONE\n' + d.log_tail;
-    loadHdfsStatus();
-  } catch (e) {
-    log.textContent = '❌ ' + e.message;
-  }
-}
-
-async function loadHdfsStatus() {
-  try {
-    const d = await api('/api/hdfs-status');
-    document.getElementById('sqoop-log').textContent = d.raw;
-  } catch (e) {
-    document.getElementById('sqoop-log').textContent = '❌ ' + e.message;
-  }
-}
-
-let chart;
-async function runSparkStats() {
-  const chartEl = document.getElementById('chart');
-  chartEl.innerHTML = '<p>⏳ Spark running...</p>';
-  try {
-    const d = await api('/api/stats');
-    chartEl.innerHTML = '<p>✅ Spark job done. Output:</p>' +
-      '<pre style="font-size:11px;background:#2c3e50;color:#ecf0f1;padding:8px;overflow:auto;max-height:200px">' +
-      d.output + '</pre>';
-  } catch (e) {
-    chartEl.innerHTML = '<p style="color:#e74c3c">❌ ' + e.message + '</p>';
-  }
-}
-
-async function writeReviewHbase() {
-  const body = {
-    scenic_id: document.getElementById('rb-scenic').value,
-    visitor_id: document.getElementById('rb-visitor').value,
-    rating: parseInt(document.getElementById('rb-rating').value),
-    comment: document.getElementById('rb-comment').value,
-  };
-  try {
-    const d = await api('/api/reviews', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    });
-    document.getElementById('hbase-result').innerHTML =
-      `<p>✅ Wrote to HBase row_key=${d.row_key}</p>`;
-    scanHbase();
-  } catch (e) {
-    document.getElementById('hbase-result').innerHTML =
-      `<p style="color:#e74c3c">❌ ${e.message}</p>`;
-  }
-}
-
-async function scanHbase() {
-  const sid = document.getElementById('rb-scan').value;
-  try {
-    const d = await api(`/api/reviews/${sid}`);
-    document.getElementById('hbase-result').innerHTML =
-      `<p>Scenic ${sid}: ${d.count} reviews in HBase</p>` +
-      tableHtml(d.data);
-  } catch (e) {
-    document.getElementById('hbase-result').innerHTML =
-      `<p style="color:#e74c3c">❌ ${e.message}</p>`;
-  }
-}
-
-async function publishKafka() {
-  const body = {
-    scenic_id: document.getElementById('kf-scenic').value,
-    visitor_id: document.getElementById('kf-visitor').value,
-    rating: parseInt(document.getElementById('kf-rating').value),
-    comment: document.getElementById('kf-comment').value,
-  };
-  try {
-    const d = await api('/api/reviews-stream', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    });
-    document.getElementById('kafka-log').textContent =
-      '✅ Published:\n' + JSON.stringify(d.payload, null, 2);
-  } catch (e) {
-    document.getElementById('kafka-log').textContent = '❌ ' + e.message;
-  }
-}
-
-async function consumeKafka() {
-  try {
-    const d = await api('/api/reviews-stream?timeout_ms=2000');
-    document.getElementById('kafka-log').textContent =
-      `📥 Consumed ${d.count} messages from ${d.topic}:\n` +
-      JSON.stringify(d.data, null, 2);
-  } catch (e) {
-    document.getElementById('kafka-log').textContent = '❌ ' + e.message;
-  }
-}
-
-window.onload = () => { loadScenics(); loadScenicsHive(); };
-</script>
+  <script src="static/js/common.js"></script>
+  <script src="static/js/api.js"></script>
+  <script src="static/js/index.js"></script>
 </body>
 </html>

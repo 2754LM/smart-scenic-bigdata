@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>业务管理 - 智能景区大数据平台</title>
+  <link rel="stylesheet" href="static/css/main.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="card" style="margin-bottom: 16px">
+      <div class="form-row" id="tab-bar">
+        <button class="btn btn-primary" data-tab="attractions">景点</button>
+        <button class="btn" data-tab="visitors">游客</button>
+        <button class="btn" data-tab="consumption">消费</button>
+        <button class="btn" data-tab="visits">游玩</button>
+        <button class="btn" data-tab="hbase">HBase 实时</button>
+      </div>
+    </div>
+
+    <!-- 景点 -->
+    <div id="tab-attractions" class="tab-content">
+      <div class="card">
+        <div class="card-title">景点列表</div>
+        <div class="card-body" id="table-attractions"></div>
+      </div>
+    </div>
+
+    <!-- 游客 -->
+    <div id="tab-visitors" class="tab-content" style="display:none">
+      <div class="card">
+        <div class="card-title">游客列表</div>
+        <div class="form-row">
+          <label>性别:</label>
+          <select id="v-gender"><option value="">全部</option><option>男</option><option>女</option></select>
+          <label>年龄:</label>
+          <input type="number" id="v-min-age" placeholder="最小" style="width:80px" />
+          <span>~</span>
+          <input type="number" id="v-max-age" placeholder="最大" style="width:80px" />
+          <button class="btn btn-primary" id="v-search">查询</button>
+        </div>
+        <div class="card-body" id="table-visitors"></div>
+        <div class="pagination" id="pagination-visitors"></div>
+      </div>
+    </div>
+
+    <!-- 消费 -->
+    <div id="tab-consumption" class="tab-content" style="display:none">
+      <div class="card">
+        <div class="card-title">消费记录</div>
+        <div class="form-row">
+          <label>开始日期:</label>
+          <input type="date" id="c-start" />
+          <label>结束日期:</label>
+          <input type="date" id="c-end" />
+          <label>游客ID:</label>
+          <input type="number" id="c-visitor-id" style="width:100px" />
+          <label>景点ID:</label>
+          <input type="number" id="c-attraction-id" style="width:80px" />
+          <button class="btn btn-primary" id="c-search">查询</button>
+        </div>
+        <div class="card-body" id="table-consumption"></div>
+        <div class="pagination" id="pagination-consumption"></div>
+      </div>
+    </div>
+
+    <!-- 游玩 -->
+    <div id="tab-visits" class="tab-content" style="display:none">
+      <div class="card">
+        <div class="card-title">游玩记录</div>
+        <div class="form-row">
+          <label>开始日期:</label>
+          <input type="date" id="vr-start" />
+          <label>结束日期:</label>
+          <input type="date" id="vr-end" />
+          <label>游客ID:</label>
+          <input type="number" id="vr-visitor-id" style="width:100px" />
+          <label>景点ID:</label>
+          <input type="number" id="vr-attraction-id" style="width:80px" />
+          <button class="btn btn-primary" id="vr-search">查询</button>
+        </div>
+        <div class="card-body" id="table-visits"></div>
+        <div class="pagination" id="pagination-visits"></div>
+      </div>
+    </div>
+
+    <!-- HBase 实时 -->
+    <div id="tab-hbase" class="tab-content" style="display:none">
+      <div class="card">
+        <div class="card-title">HBase 实时画像查询</div>
+        <div class="form-row">
+          <label>查询类型:</label>
+          <select id="hb-type">
+            <option value="visitor">游客画像 (V+8位ID)</option>
+            <option value="attraction">景点统计 (A+4位ID)</option>
+            <option value="recent">最近游玩记录</option>
+          </select>
+          <label>ID:</label>
+          <input type="number" id="hb-id" style="width:150px" />
+          <button class="btn btn-primary" id="hb-search">查询</button>
+        </div>
+        <div class="card-body" id="hbase-result"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/js/common.js"></script>
+  <script src="static/js/api.js"></script>
+  <script src="static/js/manage.js"></script>
+</body>
+</html>

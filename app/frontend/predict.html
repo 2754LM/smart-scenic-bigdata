@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>模型预测 - 智能景区大数据平台</title>
+  <link rel="stylesheet" href="static/css/main.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- 预测表单 -->
+    <div class="card" style="margin-bottom: 16px">
+      <div class="card-title">实时预测 <span class="subtitle">基于 P1 训练的模型</span></div>
+      <div class="form-row" style="margin-bottom: 16px">
+        <label>任务类型:</label>
+        <select id="pred-type">
+          <option value="consumption_amount">消费金额预测（回归）</option>
+          <option value="daily_visitor">日客流量预测（回归）</option>
+          <option value="high_value_visitor">高价值游客识别（分类）</option>
+        </select>
+      </div>
+
+      <!-- 消费金额特征 -->
+      <div id="form-consumption" class="form-block">
+        <div class="form-row">
+          <label>景点类型:</label>
+          <select id="c-type"><option>文化</option><option>娱乐</option><option>自然</option><option>运动</option></select>
+          <label>月份:</label>
+          <select id="c-month">
+            ${[...Array(12)].map((_,i)=>i+1).map(m=>`<option value="${m}">${m}月</option>`).join('')}
+          </select>
+          <label>星期:</label>
+          <select id="c-weekday">
+            <option value="1">周日</option><option value="2">周一</option>
+            <option value="3">周二</option><option value="4">周三</option>
+            <option value="5">周四</option><option value="6">周五</option>
+            <option value="7">周六</option>
+          </select>
+          <label>小时:</label>
+          <input type="number" id="c-hour" value="10" min="0" max="23" />
+          <label>是否周末:</label>
+          <select id="c-weekend"><option value="0">否</option><option value="1">是</option></select>
+          <label>是否节假日:</label>
+          <select id="c-holiday"><option value="0">否</option><option value="1">是</option></select>
+        </div>
+      </div>
+
+      <!-- 日客流量特征 -->
+      <div id="form-visitor" class="form-block" style="display:none">
+        <div class="form-row">
+          <label>月份:</label>
+          <input type="number" id="v-month" value="7" min="1" max="12" />
+          <label>星期:</label>
+          <select id="v-weekday">
+            <option value="1">周日</option><option value="2">周一</option>
+            <option value="3">周二</option><option value="4">周三</option>
+            <option value="5">周四</option><option value="6">周五</option>
+            <option value="7">周六</option>
+          </select>
+          <label>年日(1-365):</label>
+          <input type="number" id="v-dayofyear" value="200" min="1" max="366" />
+          <label>是否周末:</label>
+          <select id="v-weekend"><option value="0">否</option><option value="1">是</option></select>
+          <label>是否节假日:</label>
+          <select id="v-holiday"><option value="0">否</option><option value="1">是</option></select>
+        </div>
+      </div>
+
+      <!-- 高价值游客特征 -->
+      <div id="form-highvalue" class="form-block" style="display:none">
+        <div class="form-row">
+          <label>年龄:</label>
+          <input type="number" id="h-age" value="30" min="0" max="120" />
+          <label>性别:</label>
+          <select id="h-gender"><option value="男">男</option><option value="女">女</option></select>
+          <label>偏好类型:</label>
+          <select id="h-pref"><option>文化</option><option>娱乐</option><option>自然</option><option>运动</option></select>
+          <label>游玩次数:</label>
+          <input type="number" id="h-visits" value="6" min="0" />
+          <label>平均消费:</label>
+          <input type="number" id="h-avg-consume" value="500" min="0" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <button class="btn btn-primary" id="btn-predict">开始预测</button>
+      </div>
+      <div id="pred-result"></div>
+    </div>
+
+    <!-- 模型对比 -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">回归模型对比 <span class="subtitle">LinearRegression / Lasso / Ridge</span></div>
+        <div class="card-body" id="table-regression"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">分类模型对比 <span class="subtitle">DT / RF / GBT / LR</span></div>
+        <div class="card-body" id="table-classification"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 16px">
+      <div class="card-title">聚类解释 <span class="subtitle">KMeans + DBSCAN</span></div>
+      <div class="card-body" id="table-clustering"></div>
+    </div>
+  </div>
+
+  <script src="static/js/common.js"></script>
+  <script src="static/js/api.js"></script>
+  <script src="static/js/predict.js"></script>
+</body>
+</html>
