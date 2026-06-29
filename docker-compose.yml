@@ -367,6 +367,7 @@ services:
       - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./config/spark/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
       - ./config/spark/workers:/opt/spark/conf/workers:ro
+      - ./app/jobs:/opt/jobs:ro
       - shared-data:/shared
     networks:
       - bigdata-net
@@ -429,6 +430,7 @@ services:
     volumes:
       - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
       - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
+      - ./app/jobs:/opt/jobs:ro
       - hive-server1-data:/opt/hive/conf
     networks:
       - bigdata-net
