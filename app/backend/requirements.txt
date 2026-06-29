@@ -1,5 +1,27 @@
+# Web framework
 fastapi==0.110.0
 uvicorn[standard]==0.27.1
-pymysql==1.1.0
-kafka-python==2.0.2
 pydantic==2.6.1
+pydantic-settings==2.2.1
+
+# MySQL
+pymysql==1.1.0
+cryptography==42.0.0
+
+# Hive (PyHive over Thrift)
+PyHive==0.7.0
+thrift==0.16.0
+thrift-sasl==0.4.3
+
+# HBase (REST/stargate)
+requests==2.31.0
+
+# HDFS WebHDFS
+hdfs==2.7.3
+
+# ML model loading
+scikit-learn==1.4.0
+numpy==1.26.4
+pandas==2.2.0
+
+# CORS
