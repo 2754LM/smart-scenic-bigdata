@@ -73,9 +73,9 @@ async function loadVisitors() {
       { title: '性别', key: '性别' },
       { title: '年龄', key: '年龄' },
       { title: '地区', key: '地区' },
-    ], r.data.items);
+    ], r.items);
     renderPagination(document.getElementById('pagination-visitors'),
-      r.data.page, r.data.page_size, r.data.total,
+      r.page, r.page_size, r.total,
       (p) => { visitorPage = p; loadVisitors(); });
   } catch (e) { renderError(el, '加载失败'); }
 }
@@ -101,9 +101,9 @@ async function loadConsumption() {
       { title: '游客ID', key: '游客ID' },
       { title: '景点ID', key: '景点ID' },
       { title: '金额', key: '消费金额', render: r => fmtCNY(r.消费金额) },
-    ], r.data.items);
+    ], r.items);
     renderPagination(document.getElementById('pagination-consumption'),
-      r.data.page, r.data.page_size, r.data.total,
+      r.page, r.page_size, r.total,
       (p) => { consumptionPage = p; loadConsumption(); });
   } catch (e) { renderError(el, '加载失败'); }
 }
@@ -129,9 +129,9 @@ async function loadVisits() {
       { title: '游客ID', key: '游客ID' },
       { title: '景点ID', key: '景点ID' },
       { title: '时长(h)', key: '游玩时长', render: r => fmt(r.游玩时长, 2) },
-    ], r.data.items);
+    ], r.items);
     renderPagination(document.getElementById('pagination-visits'),
-      r.data.page, r.data.page_size, r.data.total,
+      r.page, r.page_size, r.total,
       (p) => { visitsPage = p; loadVisits(); });
   } catch (e) { renderError(el, '加载失败'); }
 }
