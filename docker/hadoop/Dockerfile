@@ -14,7 +14,7 @@
 #
 # Build size: ~700MB (vs apache/hadoop:3.3.6 base ~600MB)
 
-FROM apache/hadoop:3.3.6
+FROM apache/hadoop:3.1.0
 
 USER root
 

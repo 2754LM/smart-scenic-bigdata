@@ -291,30 +291,31 @@ services:
       - bigdata-net
 
   # ========================================================
-  # Kafka KRaft Cluster 鑴?閿涘湏pache 鐎规ɑ鏌熼敍?  # ========================================================
+    # ========================================================
+  # Kafka Cluster （对齐 docx：Kafka 3.1.0 + ZK 模式）
+  # 与 docx 一致：3 ZK 节点服务 Kafka + HBase
   kafka-1:
     image: apache/kafka:${KAFKA_VERSION}
     container_name: kafka-1
     mem_limit: 1024m
     hostname: kafka-1
     restart: unless-stopped
+    depends_on:
+      - zookeeper-1
+      - zookeeper-2
+      - zookeeper-3
     ports:
       - "${PORT_KAFKA}:9092"
       - "${PORT_KAFKA_EXTERNAL}:9094"
     environment:
-      KAFKA_NODE_ID: ${KAFKA_NODE_ID_1}
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
+      KAFKA_BROKER_ID: ${KAFKA_NODE_ID_1}
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,EXTERNAL://:9094"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-1:9092,EXTERNAL://localhost:19095"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
       - kafka1-data:/var/lib/kafka/data
@@ -327,28 +328,27 @@ services:
     mem_limit: 1024m
     hostname: kafka-2
     restart: unless-stopped
-    ports: []  # 娑撳秴顕径鏍ㄦ瘹闂囪绱濇禒鍛存肠缂囥倕鍞撮柅姘繆
+    depends_on:
+      - zookeeper-1
+      - zookeeper-2
+      - zookeeper-3
+      - kafka-1
+    ports: []
     environment:
-      KAFKA_NODE_ID: ${KAFKA_NODE_ID_2}
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_BROKER_ID: ${KAFKA_NODE_ID_2}
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-2:9092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
       - kafka2-data:/var/lib/kafka/data
     networks:
       - bigdata-net
 
-  # ========================================================
   # Spark Standalone Cluster: 1 Master + 1 Worker閿涘湏pache 鐎规ɑ鏌熼敍?  # ========================================================
   spark-master:
     image: apache/spark:${SPARK_VERSION}
