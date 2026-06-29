@@ -82,4 +82,17 @@ const API = {
   visitRecent:        (limit=20) => api(`/api/realtime/visit-recent?limit=${limit}`),
   visitorProfile:     (id)    => api(`/api/realtime/visitor/${id}`),
   attractionStat:     (id)    => api(`/api/realtime/attraction/${id}`),
+
+  // admin (system management)
+  adminStatus:        ()      => api('/api/admin/status'),
+  adminContainers:    ()      => api('/api/admin/containers'),
+  adminModels:        ()      => api('/api/admin/models'),
+  adminDatasets:      ()      => api('/api/admin/datasets'),
+  adminHdfs:          ()      => api('/api/admin/hdfs'),
+  adminJobs:          (limit=20) => api(`/api/admin/jobs?limit=${limit}`),
+  adminJob:           (id)    => api(`/api/admin/jobs/${id}`),
+  adminActions:       ()      => api('/api/admin/actions'),
+  adminTrigger:       (name)  => api(`/api/admin/actions/${name}`, { method: 'POST' }),
+  adminPipeline:      (actions) => api('/api/admin/pipeline', {
+                              method: 'POST', body: { actions } }),
 };

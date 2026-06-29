@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse
 
 import config
 import services.hbase_service as hbase_svc
-from routers import analysis, attractions, consumption, overview, predict, realtime, visitors
+from routers import admin, analysis, attractions, consumption, overview, predict, realtime, visitors
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +54,7 @@ app.include_router(consumption.router)
 app.include_router(analysis.router)
 app.include_router(predict.router)
 app.include_router(realtime.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")

@@ -15,6 +15,7 @@
         <button class="btn" data-tab="visits">游玩</button>
         <button class="btn" data-tab="hbase">HBase 实时</button>
         <button class="btn" data-tab="kafka">Kafka 实时流</button>
+        <button class="btn" data-tab="system">系统管理</button>
       </div>
     </div>
 
@@ -253,5 +254,56 @@ async function refreshKafkaStatus() {
 }
 </script>
 
+    <!-- 系统管理 -->
+    <div id="tab-system" class="tab-content" style="display:none">
+      <div class="card">
+        <div class="card-title">系统总览</div>
+        <div class="card-body" id="sys-overview">加载中...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">17 个容器状态</div>
+        <div class="card-body" id="sys-containers">加载中...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">已训练模型 (PySpark MLlib)</div>
+        <div class="card-body" id="sys-models">加载中...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">数据集状态</div>
+        <div class="card-body" id="sys-datasets">加载中...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">HDFS 分区目录</div>
+        <div class="card-body" id="sys-hdfs">加载中...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">操作到型按钮</div>
+        <div class="card-body">
+          <p>单狗操作（异步，下方"异步任务"区域查看进度）：</p>
+          <div class="form-row" style="flex-wrap:wrap; gap:8px">
+            <button class="btn btn-primary" onclick="triggerAction('load_csv')">加载 CSV 到 MySQL</button>
+            <button class="btn btn-primary" onclick="triggerAction('sqoop')">Sqoop 导入 HDFS</button>
+            <button class="btn btn-primary" onclick="triggerAction('spark_clean')">Spark 清洗</button>
+            <button class="btn btn-primary" onclick="triggerAction('hive_ddl')">Hive DDL + 视图</button>
+            <button class="btn btn-primary" onclick="triggerAction('hive_queries')">Hive 复杂查询</button>
+            <button class="btn btn-primary" onclick="triggerAction('spark_train')">PySpark 训练</button>
+            <button class="btn" style="background:#28a745; color:#fff; margin-left:20px" onclick="triggerPipeline()">⚡ 一键初始化</button>
+          </div>
+          <p style="color:#999; font-size:12px; margin-top:8px">一键初始化 = load_csv → sqoop → spark_clean → hive_ddl → spark_train (约 5-10 分钟)</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">异步任务 (最近 20 个)</div>
+        <div class="card-body" id="sys-jobs">加载中...</div>
+      </div>
+    </div>
+
+  <script src="static/js/admin.js"></script>
 </body>
 </html>
