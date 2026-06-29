@@ -31,7 +31,7 @@
 cd smart-scenic-bigdata
 scripts\start.bat          REM 启动大数据平台（17 容器）
 scripts\install-deps.bat   REM 首次启动：装 Python 依赖
-scripts\start-app.bat      REM 启动 Demo 应用（自动检测 + 智能双轨）
+scripts\start-app.bat      REM 启动 Web 应用（自动检测 + 智能双轨）
 ```
 
 打开浏览器：
@@ -60,7 +60,7 @@ scripts\start-app.bat      REM 启动 Demo 应用（自动检测 + 智能双轨�
 - ✅ 端到端业务流测试（`scripts\test-e2e.bat` - 7 大业务场景）
 - ✅ 7 大组件的真分布式部署（含副本机制、HA、Ensemble）
 - ✅ 业务数据初始化（**5 张业务表**）
-- ✅ **Demo 应用**：`app/` 目录下 FastAPI 后端 + 前端演示，覆盖全部组件调用
+- ✅ \*\*完整业务系统\*\*：`app/` 目录下 FastAPI 后端 + 4 页 Web 前端 + 30+ REST API + Kafka 实时流，**覆盖所有 7 大组件**
 - ✅ 完整的部署文档和常见问题
 
 > **关于 Sqoop**：Sqoop 1.4.7 已自动安装到 `hadoop-namenode` 容器（首次启动自动下载 JDK + Sqoop）。在容器内执行 `bash /opt/jobs/sqoop-import-mysql.sh` 可一键将 5 张业务表导入 HDFS `/scenic/sqoop/`。
@@ -73,7 +73,7 @@ scripts\start-app.bat      REM 启动 Demo 应用（自动检测 + 智能双轨�
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                        Windows 宿主机                                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                           │
-│  │  Demo 前端   │  │  Demo 后端   │  │   Jupyter    │   ← 6.5 可视化             │
+│  │  Web 前端   │  │  FastAPI 后端  │  │   Jupyter    │   ← 6.5 可视化             │
 │  │  (HTML+JS)   │  │  (FastAPI)   │  │  (PySpark)   │                           │
 │  │  :8080       │  │  :8000       │  │              │                           │
 │  └──────────────┘  └──────┬───────┘  └──────────────┘                           │
@@ -279,15 +279,15 @@ scripts\start-app.bat      REM 启动 Demo 应用（自动检测 + 智能双轨�
 
 ---
 
-## 六、Demo 应用（推荐演示）
+## 六、Web 应用（完整实现）
 
-`app/` 目录下有一个完整的 **FastAPI 后端 + HTML 前端** Demo 应用，覆盖全部大数据组件调用：
+`app/` 目录下有完整的 \*\*FastAPI 后端 + 4 页 Web 前端 + Kafka 实时流推送\*\*，覆盖全部大数据组件调用：
 
 ```cmd
 REM 启动大数据平台
 scripts\start.bat
 
-REM 启动 Demo 应用
+REM 启动 Web 应用
 scripts\start-app.bat
 ```
 
@@ -295,7 +295,7 @@ scripts\start-app.bat
 - 前端演示页：`http://localhost:8080`
 - API 文档：`http://localhost:8000/docs`
 
-**Demo 功能（前端按钮 → 后端调用的组件）**：
+\*\*已实现的功能（前端按钮 → 后端 → 大数据组件）\*\*：
 
 | 前端按钮 | 后端接口 | 调用的组件 | 演示内容 |
 |---------|---------|-----------|---------|
@@ -361,7 +361,7 @@ scripts\test-e2e.bat
 
 会跑 **7 大业务场景**（MySQL 数据 / HDFS 存储 / Hive / Kafka 流 / HBase CRUD / Spark 集群 / Sqoop 数据采集），共 **36 项**测试。
 
-### 7.4 启动 Demo 应用
+### 7.4 启动 Web 应用
 
 ```cmd
 scripts\start-app.bat
@@ -432,8 +432,8 @@ smart-scenic-bigdata/
 ├── mysql-init/                 # MySQL 初始化脚本
 │   └── 01-init-business.sql    # 5 张业务表 + 测试数据
 │
-├── app/                        # Demo 应用
-│   ├── README.md               # Demo 总说明
+├── app/                        # Web 应用（FastAPI 后端 + 4 页前端 + 30+ API）
+│   ├── README.md               # Web 应用说明
 │   ├── 组件说明.md              # 8 个大数据组件对照后端经验
 │   ├── backend/
 │   │   ├── main.py             # FastAPI 单文件后端
@@ -444,7 +444,7 @@ smart-scenic-bigdata/
 │
 ├── scripts/                    # 运维脚本（Windows .bat）
 │   ├── start.bat               # 一键启动大数据平台
-│   ├── start-app.bat           # 一键启动 Demo 应用
+│   ├── start-app.bat           # 一键启动 Web 应用
 │   ├── stop.bat                # 停止（保留数据）
 │   ├── verify.bat              # 38 项组件连通性测试
 │   ├── test-e2e.bat            # 7 大业务场景测试
@@ -551,8 +551,8 @@ docker exec hadoop-namenode bash /opt/jobs/sqoop-import-mysql.sh
 | Spark | http://localhost:18080 | 任务监控 |
 | HiveServer2 #1 Web | http://localhost:11012 | 查询界面 |
 | HiveServer2 #2 Web | http://localhost:11013 | 查询界面 |
-| **Demo 前端** | **http://localhost:8080** | **组件演示页** |
-| **Demo API** | **http://localhost:8000/docs** | **Swagger UI** |
+| **Web 前端** | **http://localhost:8080** | **4 页仪表盘** |
+| **REST API** | **http://localhost:8000/docs** | **Swagger UI** |
 
 JDBC 连接字符串：
 - `jdbc:hive2://localhost:11010` (HiveServer2 #1)
@@ -565,7 +565,7 @@ JDBC 连接字符串：
 - 📘 [部署文档](docs/部署文档.md) - 完整部署步骤与验收清单
 - 🏗️ [架构说明](docs/架构说明.md) - 组件交互、数据流、目录挂载
 - ❓ [常见问题](docs/常见问题.md) - FAQ 与故障排查
-- 🎯 [Demo 应用说明](app/README.md) - FastAPI + 前端演示
+- 📖 [Web 应用说明](app/README.md) - FastAPI 后端 + 4 页前端 + Kafka 实时流
 - 📚 [组件说明（给后端开发者）](app/组件说明.md) - 大数据组件对照后端经验
 
 ---

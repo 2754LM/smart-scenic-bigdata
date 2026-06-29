@@ -25,7 +25,7 @@
 - 6.2 平台搭建 ✅（本项目核心）
 - 6.3 数据采集（MySQL → HDFS 用 Sqoop；Kafka 实时流）
 - 6.4 数据分析（Spark SQL + MLlib + Hive）
-- 6.5 可视化（`app/` 目录下的 FastAPI + 前端 Demo）
+- 6.5 可视化（`app/` 目录下的 FastAPI 后端 + 4 页 Web 前端 + Kafka 实时流）
 
 ---
 
@@ -135,8 +135,8 @@ smart-scenic-bigdata/
 │                               # bind mount 到 /docker-entrypoint-initdb.d
 │                               # MySQL 容器首次启动自动跑
 │
-├── app/                        # Demo 应用（给后端开发者演示用）
-│   ├── README.md               # Demo 总说明
+├── app/                        # Web 应用（FastAPI 后端 + 4 页前端 + 30+ API）（给后端开发者演示用）
+│   ├── README.md               # Web 应用说明
 │   ├── 组件说明.md              # 8 组件对照后端经验
 │   ├── backend/
 │   │   ├── main.py             # FastAPI 单文件后端
@@ -147,7 +147,7 @@ smart-scenic-bigdata/
 │
 ├── scripts/                    # 运维脚本（Windows .bat）
 │   ├── start.bat               # 一键启动大数据平台
-│   ├── start-app.bat           # 一键启动 Demo 应用
+│   ├── start-app.bat           # 一键启动 Web 应用
 │   ├── stop.bat                # 停止（保留数据）
 │   ├── verify.bat              # 38 项组件连通性测试
 │   ├── test-e2e.bat            # 7 大业务场景测试
@@ -228,7 +228,7 @@ if "%X%"=="1" (
 3. ❌ **Phoenix 4.x**：跟 HBase 2.1.3 兼容性测试麻烦，时间成本高
 4. ✅ **`docker exec hbase shell`**：当前方案
 
-**本项目方案**：Demo backend 用 `docker exec hbase shell` 代替 happybase。
+**本项目方案**：后端用 `docker exec hbase shell` 代替 happybase（Thrift 协议不兼容）。
 - 影响：每次写/读 1-2 秒延迟（手动点击无感）
 - 生产环境（高频写入）：用 Java `hbase-client` 或 Phoenix
 
@@ -324,7 +324,7 @@ docker compose build <service-name>
 docker compose up -d --force-recreate <service-name>
 ```
 
-### 6.5 添加新 demo 后端接口
+### 6.5 添加新后端接口
 
 直接改 `app/backend/main.py`，FastAPI 会自动 reload（如果用 `--reload` 模式启动）。
 
@@ -348,7 +348,7 @@ scripts\verify.bat
 # 5. 跑业务场景测试
 scripts\test-e2e.bat
 
-# 6. Demo 应用验证
+# 6. Web 应用验证
 scripts\start-app.bat
 # 浏览器打开 http://localhost:8080
 ```

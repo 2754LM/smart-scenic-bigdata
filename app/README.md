@@ -1,25 +1,89 @@
-# Demo 应用 - 智能景区大数据平台
+# Web 应用 - 智能景区大数据平台
 
-用最少代码演示**微服务后端**如何跟大数据平台**全部 8 个组件**交互。给后端开发者用，作为大数据组件的入门 demo。
+> 完整实现作业 6.2 / 6.3 / 6.4 / 6.5 全部要求。
+> FastAPI 后端 + 4 页 Web 前端 + Kafka 实时流推送，覆盖 7 大大数据组件。
+
+## 功能总览
+
+| 作业要求 | Web 应用实现 | 状态 |
+|---------|------------|------|
+| 6.2 平台搭建 | 通过 17 个 Docker 容器一键部署 | ✅ |
+| 6.3 数据采集 | Sqoop MySQL→HDFS + Kafka 实时流 | ✅ |
+| 6.4 数据分析 | Spark SQL + Hive 仓库 + 4 个回归 + 1 聚类 + 2 分类模型 | ✅ |
+| 6.5 可视化 | 4 页前端（总览/分析/预测/管理）+ Kafka 实时推送 | ✅ |
 
 ## 架构图
 
 ```
-              ┌─────────────────────────────┐
-              │   FastAPI 后端 (app/backend) │
-              │   - pymysql     → MySQL      │
-              │   - hdfs dfs    → HDFS       │
-              │   - hbase shell → HBase      │
-              │   - kafka-py    → Kafka      │
-              │   - spark-submit → Spark     │
-              │   - docker exec → Sqoop      │
-              └──────────────┬───────────────┘
-                             │
-            ┌────────┬───────┼────────┬─────────┐
-            ▼        ▼       ▼        ▼         ▼
-         [MySQL]  [HDFS]  [HBase]   [Kafka]  [Spark]
-            │        ▲       ▲         │        │
-            └──Sqoop─┘       └─Spark───┘────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                   Web 应用 (app/)                                    │
+│                                                                       │
+│   ┌────────────────────────────┐  ┌─────────────────────────────┐   │
+│   │ FastAPI 后端 (app/backend) │  │ 4 页 Web 前端 (app/frontend)│   │
+│   │ - 32 个 REST 路由          │  │ - index.html (总览)           │   │
+│   │ - 5 个 service 模块        │  │ - analysis.html (分析)       │   │
+│   │ - Kafka 后台消费者         │  │ - predict.html (预测)        │   │
+│   │ - 双轨 ML (PySpark+sklearn)│  │ - manage.html (管理 + Kafka) │   │
+│   └────────────┬───────────────┘  └────────────┬────────────────┘   │
+│                │                                 │                   │
+│   ┌────────────┴─────────────────────────────┴────┐               │
+│   │ 浏览器 HTTP / WebSocket                          │               │
+│   │   GET/POST /api/* (32 个路由)                    │               │
+│   └─────────────────────────────────────────────────┘               │
+│                              │                                       │
+│   ┌──────────────────────────┴─────────────────────────────┐       │
+│   │ 业务服务层                                                 │       │
+│   │  mysql_service / hdfs_service / hbase_service             │       │
+│   │  hive_service / model_service / kafka_producer             │       │
+│   │  kafka_consumer / pyspark_loader / auto_train              │       │
+│   └────────────┬──────────────────────────────────────────────┘       │
+└───────────────┼──────────────────────────────────────────────────────┘
+                │
+   ┌────────────┴────────────┬────────────┬────────────┬────────────┐
+   ▼                         ▼            ▼            ▼            ▼
+[MySQL]              [HDFS/Hive]    [HBase]      [Kafka]      [Spark]
+   ▲                         ▲            ▲            ▲            ▲
+   └─── Sqoop ───────────────┘            └──Spark─────┘────────────┘
+```
+
+## 4 页前端
+
+| 页面 | URL | 内容 |
+|------|-----|------|
+| **总览** | `http://localhost:8080` | 8 KPI + 7 ECharts 图表 |
+| **数据分析** | `http://localhost:8080/analysis.html` | FPGrowth 关联规则 + 时段分析 |
+| **机器学习预测** | `http://localhost:8080/predict.html` | 回归/分类/聚类动态表单 |
+| **管理 + Kafka 实时流** | `http://localhost:8080/manage.html` | 5 tab + Kafka 发布按钮 |
+
+## 32 个 REST 路由
+
+按业务模块分组：
+
+| 模块 | 路由 | 组件 |
+|------|------|------|
+| 总览 | `/api/overview/{kpi,timeseries,attraction-rank,health}` | MySQL + HBase |
+| 景点 | `/api/attractions{,/{id},/{id}/summary}` | MySQL |
+| 游客 | `/api/visitors{,/{id},/{id}/aggregate}` | MySQL |
+| 消费 | `/api/consumption{,/visits}` | MySQL |
+| 分析 | `/api/analysis/{daily,hourly,region,age-group,type-summary,fpgrowth}` | HBase + 算法 |
+| 预测 | `/api/predict{,/regression,/classification,/clustering,/compare}` | PySpark/sklearn 双轨 |
+| 实时 | `/api/realtime/{visit-recent,visitor/{id},attraction/{id}}` | HBase |
+| Kafka | `/api/realtime/publish/{review,event}` | Kafka producer |
+| 引擎 | `/api/predict/_engine` | 状态查询 |
+| Kafka | `/api/realtime/kafka/status` | 引擎状态 |
+
+## 5 个业务 Service
+
+```
+services/
+├── mysql_service.py       # pymysql → MySQL
+├── hbase_service.py       # docker exec hbase shell (绕过 Thrift 协议)
+├── hive_service.py        # pyhive / beeline → Hive
+├── kafka_producer.py      # kafka-python → Kafka producer
+├── kafka_consumer.py      # 后台线程消费 Kafka → 写 HBase
+├── model_service.py       # 双轨 ML：优先 PySpark 加载，fallback sklearn
+├── pyspark_loader.py      # PySpark PipelineModel 加载器
+└── auto_train.py          # 启动时智能检测 + 自动训练
 ```
 
 ## 启动方式
@@ -27,17 +91,18 @@
 ### 1. 一键启动（推荐）
 
 ```cmd
-REM 1. 启动大数据平台（16 个容器）
+REM 1. 启动大数据平台（17 个容器）
 scripts\start.bat
 
-REM 2. 启动 Demo 应用（后端 + 前端）
+REM 2. 启动 Web 应用（自动检测 + 智能双轨）
 scripts\start-app.bat
 ```
 
 启动后浏览器打开：
 
-- 前端演示页：`http://localhost:8080`
+- Web 仪表盘：`http://localhost:8080`
 - API 文档：`http://localhost:8000/docs`
+- 引擎状态：`http://localhost:8000/api/predict/_engine`
 
 ### 2. 手动启动
 
@@ -56,53 +121,58 @@ cd app/frontend
 python -m http.server 8080
 ```
 
-或者直接双击 `app/frontend/index.html` 在浏览器打开。
+## 智能双轨 ML 模式
 
-## 接口说明
+Web 应用的机器学习功能采用**智能双轨**：
 
-| 路径 | 组件 | 用途 | 作业对应 |
-|------|------|------|---------|
-| `GET /api/scenics` | MySQL | OLTP 查景点列表 | - |
-| `GET /api/scenics-hive` | HDFS | OLAP 查同一份数据（Sqoop 导入的） | 6.3 |
-| `GET /api/stats` | Spark | Spark SQL 聚合：景点访问次数 | 6.4 |
-| `POST /api/reviews` | HBase | 实时写评论（NoSQL） | 6.5 |
-| `GET /api/reviews/{id}` | HBase | 实时读评论 | 6.5 |
-| `POST /api/reviews-stream` | Kafka | 异步发布消息 | 6.3 |
-| `GET /api/reviews-stream` | Kafka | 异步消费消息 | 6.3 |
-| `POST /api/trigger-sqoop` | Sqoop | 触发批量 ETL | 6.3 |
-| `GET /api/hdfs-status` | HDFS | 看 HDFS 文件 | 6.3 |
+| 状态 | 行为 |
+|------|------|
+| `/shared/models/` 已有训练好的 PySpark 模型 | 直接加载，预测走 PySpark |
+| 没有模型 | 后台线程自动调 `spark-submit` 训练（不阻塞启动）|
+| 训练失败或 Spark 不可用 | 自动 fallback 到 sklearn |
 
-## 给后端开发者的核心 takeaway
+**用户不需要任何手动操作**。详见 [docs/快速启动.md](../docs/快速启动.md) 第 5 节。
+
+## Kafka 实时流
+
+完整业务实现：
+
+```
+[前端 manage.html] → POST /api/realtime/publish/review|event
+   ↓
+[kafka_producer.publish_*()]
+   ↓
+[Kafka scenic_reviews / scenic_events topic]
+   ↓
+[kafka_consumer 后台线程]
+   ↓
+[hbase_service.put_review() / put_realtime_event()]
+   ↓
+[HBase scenic_reviews / scenic_realtime]
+   ↓
+[前端 GET /api/realtime/visit-recent] 验证落库
+```
+
+## 给后端开发者的说明
 
 你**不需要学任何大数据开发的东西**。你只需要把每个组件当成一个微服务来调：
 
 | 你熟悉的 | 大数据组件 | 调法 |
 |---------|----------|------|
 | MySQL driver | MySQL | `pymysql.connect()` |
-| MongoDB driver | HBase | `happybase` 或 `hbase shell` |
+| MongoDB driver | HBase | `hbase shell` via docker exec |
 | RocketMQ client | Kafka | `kafka-python` |
-| Celery 提交任务 | Spark | `spark-submit` |
 | AWS S3 CLI | HDFS | `hdfs dfs` |
-| DataX 跑批 | Sqoop | `sqoop import` |
-| Presto / Trino | Hive | `pyhive` 或 beeline |
+| Presto / Trino | Hive | `pyhive` |
+| DataX 跑批 | Sqoop | `bash sqoop-import-mysql.sh` |
+| Celery 提交任务 | Spark | `spark-submit` |
 
-所有调用模式都一样：**发请求 → 等待 → 返回结果**。你不会写一行 MapReduce 代码，除非性能真有压力。
-
-## Demo 演示路径（5 分钟）
-
-打开 `http://localhost:8080`：
-
-1. **MySQL OLTP** — 点 "Reload from MySQL" 看 10 行景点
-2. **HDFS OLAP** — 点 "Reload from Hive" 看同一份数据（Sqoop 导入的）
-3. **触发 ETL** — 点 "Trigger Sqoop Import" 看日志，再点 "Show HDFS Files" 看 `/scenic/sqoop/` 下文件
-4. **Spark 统计** — 点 "Run Spark Job" 看分布式计算输出
-5. **HBase 实时写** — 填评论表单 → "Write to HBase" → "Scan HBase" 看刚写的行
-6. **Kafka 流** — 填消息 → "Publish" → "Consume Messages" 看刚发的消息
-
-每点一次按钮，后端都会调对应组件，证明整个链路通畅。
+所有调用模式都一样：**发请求 → 等待 → 返回结果**。不用写一行 MapReduce 代码。
 
 ## 相关文档
 
-- 📘 [组件说明.md](组件说明.md) - 8 个大数据组件对照后端经验
+- 📘 [docs/快速启动.md](../docs/快速启动.md) - 完整启动指南
+- 📘 [docs/选题要求.md](../docs/选题要求.md) - 作业要求 + 项目对照
+- 📘 [app/jobs/README.md](jobs/README.md) - Spark 清洗 / Hive 仓库 / PySpark 训练脚本
 - 📘 [../README.md](../README.md) - 大数据平台总说明
-- 📘 [../docs/部署文档.md](../docs/部署文档.md) - 完整部署步骤
+- 📘 [../AGENTS.md](../AGENTS.md) - 项目背景与设计权衡

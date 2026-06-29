@@ -57,7 +57,7 @@
       ▼
 [HBase: 实时游客分布、消费记录]
       │
-      │ HBase Shell via docker exec（当前 Demo）
+      │ HBase Shell via docker exec（生产实现）
       ▼
 [后端]  ──→  [前端 Web 实时图表]
 ```
@@ -255,7 +255,7 @@ docker compose restart hbase-master hbase-regionserver-1 hbase-regionserver-2
 | 部署方式 | ssh 登录每台手装 | docker compose 一键 |
 | JDK | `tar -zxf jdk-8u162` 手解压 | 烤进 `/opt/jdk8` 镜像 |
 | Hadoop | `tar -zxf hadoop-3.1.0` 手解压 | `apache/hadoop:3.3.6` 镜像 |
-| 集群拓扑 | 3 台真容器，靠 ssh + workers 文件互联 | 16 个容器，靠 docker 网络互联 |
+| 集群拓扑 | 3 台真容器，靠 ssh + workers 文件互联 | 17 个容器，靠 docker 网络互联 |
 | 启动命令 | ssh 到每台 + `start-dfs.sh` + `start-yarn.sh` | `docker compose up -d` |
 | 内存需求 | 每台 ≥4GB = 共 12GB+ | 总共 ≤16GB |
 | 上手成本 | 高（要 VMware + ssh + 同步）| 低（只需 Docker Desktop）|

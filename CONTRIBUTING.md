@@ -135,8 +135,8 @@ master (v1.4 平台)
 - P0 版本：4 张中文表
 - **以 P0 版本为准**
 
-#### 冲突 C：app/ 目录（前端 + 后端 demo）
-- 平台版本：组件连通性 demo（9 个接口，单文件 HTML）
+#### 冲突 C：app/ 目录（前端 + 后端）
+- 平台版本：组件连通性 API（9 个接口，单文件 HTML）
 - 与本次 3 个 feature 分支**不冲突**（feature/data-pipeline 没动 app/）
 - 但后端和前端分支会改这里，整合时**最后合后端+前端**
 
@@ -175,7 +175,7 @@ master (v1.4 平台)
 ### feature/backend-api 即将产出
 
 - 后端按业务模块拆分（attraction / visitor / consumption / analysis / predict）
-- 9 个 demo 接口 → 30+ 业务接口
+- 已扩展到 30+ 业务接口
 - 对接 Spark 作业输出、ML 模型加载
 
 ### feature/frontend-viz 即将产出

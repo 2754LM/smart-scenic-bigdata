@@ -31,7 +31,7 @@
 
 | 文件 | 改了什么 |
 |------|---------|
-| `app/backend/main.py` | 从单文件 demo 重构为路由分发 + 启动钩子 |
+| `app/backend/main.py` | 从单文件 main.py 重构为路由分发 + 启动钩子 |
 | `app/backend/requirements.txt` | 新增 `pandas / numpy / scikit-learn` |
 | `app/backend/README.md` | 新结构 + 接口表 + 模型训练说明 |
 | `.env` | 版本对齐 docx 原始方案 (Ubuntu16.04/JDK1.8.0_162/Hadoop3.1.0/ZK3.6.3/HBase2.4.11/Kafka3.1.0/Maven3.8.5) |
