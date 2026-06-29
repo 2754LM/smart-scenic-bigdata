@@ -12,8 +12,13 @@ from pathlib import Path
 # ----------------------------------------------------------------------
 BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BACKEND_DIR.parent.parent
-DATA_RAW_DIR = PROJECT_DIR / "data" / "raw_data"
-JOBS_DIR = PROJECT_DIR / "app" / "jobs"
+
+# DATA_RAW_DIR: env override (for container) > relative path (for host dev)
+import os as _os
+DATA_RAW_DIR = Path(_os.environ.get("DATA_RAW_DIR", PROJECT_DIR / "data" / "raw_data"))
+
+# JOBS_DIR: env override (for container) > relative path (for host dev)
+JOBS_DIR = Path(_os.environ.get("JOBS_DIR", PROJECT_DIR / "app" / "jobs"))
 
 # ----------------------------------------------------------------------
 # MySQL (business DB)

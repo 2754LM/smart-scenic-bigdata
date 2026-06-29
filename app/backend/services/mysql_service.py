@@ -1,7 +1,7 @@
 """
 MySQL data access layer.
 
-Business tables: t_scenic, t_visitor, t_consume, t_visit, t_review.
+Business tables: t_attraction, t_visitor, t_consumption, t_visit_record.
 The seed dataset is tiny (10/20/32/20 rows) so we also merge in the
 raw_data/*.csv files (10K+ rows) to give the front-end something to plot.
 """
@@ -75,18 +75,12 @@ def _load_table(name: str, force: bool = False) -> pd.DataFrame:
 # Public API used by routers
 # ----------------------------------------------------------------------
 def list_attractions() -> List[Dict[str, Any]]:
-    """All scenic spots, prefer MySQL, fall back to raw_data CSV."""
-    df = _load_table("t_scenic")
+    """All attractions, prefer MySQL, fall back to raw_data CSV."""
+    df = _load_table("t_attraction")
     if not df.empty:
         # Map MySQL columns to the Chinese keys the front-end expects.
-        df = df.rename(columns={
-            "scenic_id": "景点ID",
-            "scenic_name": "景点名称",
-            "scenic_type": "类型",
-            "location": "位置",
-            "open_time": "开放时间",
-        })
-        return df[["景点ID", "景点名称", "类型", "位置", "开放时间"]].to_dict("records")
+        # (MySQL stores Chinese names directly since P0 schema)
+        return df.to_dict("records")
     # Fallback to local CSV
     df = load_csv("attractions.csv")
     return df.to_dict("records")
@@ -237,7 +231,7 @@ def attraction_rank(limit: int = 10) -> List[Dict[str, Any]]:
 
 def overview_health() -> Dict[str, Any]:
     """Check connectivity to MySQL, HBase, Hive."""
-    from utils import docker_exec
+    from services.admin_service import _run_in_container
     comps: Dict[str, bool] = {}
     # MySQL
     try:
@@ -246,16 +240,16 @@ def overview_health() -> Dict[str, Any]:
         comps["mysql"] = True
     except Exception:
         comps["mysql"] = False
-    # HBase via docker exec
+    # HBase via docker exec (use socket API for compatibility)
     try:
-        out = docker_exec(config.HBASE_CONTAINER, "echo status", timeout=5)
-        comps["hbase"] = "hbase" in out.lower() or len(out) > 0
+        r = _run_in_container(config.HBASE_CONTAINER, "echo", "status", timeout=5)
+        comps["hbase"] = r["exit_code"] == 0
     except Exception:
         comps["hbase"] = False
-    # Hive via docker exec into hiveserver
+    # Hive via docker exec
     try:
-        out = docker_exec("hive-server-1", "echo ok", timeout=5)
-        comps["hive"] = len(out) > 0
+        r = _run_in_container("hive-server-1", "echo", "ok", timeout=5)
+        comps["hive"] = r["exit_code"] == 0
     except Exception:
         comps["hive"] = False
     return {

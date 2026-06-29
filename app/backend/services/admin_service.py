@@ -27,6 +27,74 @@ from utils import docker_exec
 log = logging.getLogger("smart-scenic.admin")
 
 
+# Helper: run command in container (uses docker CLI or socket API fallback)
+def _run_in_container(container: str, *cmd, timeout: int = 30) -> dict:
+    """Run command in container. Returns {stdout, stderr, exit_code}.
+    Tries docker CLI first (faster), falls back to Docker socket API.
+    Usage: _run_in_container("mysql", "mysql", "-e", "SELECT 1", timeout=10)
+    """
+    cmd = list(cmd)  # tuple -> list for JSON serialization
+    # Try docker CLI first
+    try:
+        proc = subprocess.run(
+            ["docker", "exec", container] + cmd,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return {
+            "stdout": proc.stdout or "",
+            "stderr": proc.stderr or "",
+            "exit_code": proc["returncode"],
+        }
+    except FileNotFoundError:
+        pass  # No docker CLI in container
+
+    # Fallback: use Docker socket API
+    try:
+        from services.docker_client import _request
+        exec_id = _request("POST", f"/containers/{container}/exec", {
+            "Cmd": cmd,
+            "AttachStdout": True,
+            "AttachStderr": True,
+        })
+        if not exec_id or "Id" not in exec_id:
+            return {"stdout": "", "stderr": "exec create failed", "exit_code": -1}
+
+        # Start exec + capture output via raw HTTP
+        import socket as _s
+        sock = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect("/var/run/docker.sock")
+        body = json.dumps({"Detach": False, "Tty": False})
+        req = (
+            f"POST /exec/{exec_id['Id']}/start HTTP/1.1\r\n"
+            f"Host: docker\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n{body}"
+        )
+        sock.sendall(req.encode())
+        resp = b""
+        while True:
+            try:
+                chunk = sock.recv(65536)
+            except _s.timeout:
+                break
+            if not chunk:
+                break
+            resp += chunk
+        sock.close()
+        text = resp.decode("utf-8", errors="ignore")
+        if "\r\n\r\n" in text:
+            body_text = text.split("\r\n\r\n", 1)[1]
+        else:
+            body_text = text
+
+        info = _request("GET", f"/exec/{exec_id['Id']}/json")
+        ec = info.get("ExitCode", -1) if isinstance(info, dict) else -1
+        return {"stdout": body_text, "stderr": "", "exit_code": ec}
+    except Exception as e:
+        return {"stdout": "", "stderr": str(e), "exit_code": -1}
+
+
 # ============================================================
 # 异步任务管理（线程 + 状态记录）
 # ============================================================
@@ -203,20 +271,18 @@ def _op_sqoop_import(job: Job) -> None:
         "bash", "/opt/jobs/sqoop-import-mysql.sh",
     ]
     job.log_lines.append(f"  cmd: {' '.join(cmd)}")
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    r = _run_in_container(*cmd, timeout=600)
+    proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
     # 写日志
-    if proc.stdout:
+    if proc["stdout"]:
         for line in proc.stdout.splitlines()[-50:]:
             job.log_lines.append(f"  {line}")
-    if proc.returncode != 0:
+    if proc["returncode"] != 0:
         job.log_lines.append(f"  STDERR: {proc.stderr[-500:]}")
-        raise RuntimeError(f"sqoop import failed (rc={proc.returncode})")
+        raise RuntimeError(f'sqoop import failed (rc={proc["returncode"]})')
 
     # 验证 HDFS 文件
-    hdfs_check = subprocess.run(
-        ["docker", "exec", config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "/scenic/sqoop/"],
-        capture_output=True, text=True, timeout=10,
-    )
+    hdfs_check = _run_in_container(config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "/scenic/sqoop/", timeout=10)
     job.log_lines.append(f"  HDFS /scenic/sqoop/:")
     for line in (hdfs_check.stdout or "").splitlines():
         job.log_lines.append(f"    {line}")
@@ -230,11 +296,12 @@ def _op_spark_clean(job: Job) -> None:
         "docker", "exec", config.SPARK_CONTAINER,
         "bash", "/opt/jobs/spark-submit.sh", "clean",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if proc.stdout:
-        for line in proc.stdout.splitlines()[-50:]:
+    r = _run_in_container(*cmd, timeout=600)
+    proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
+    if proc["stdout"]:
+        for line in proc["stdout"].splitlines()[-50:]:
             job.log_lines.append(f"  {line}")
-    if proc.returncode != 0:
+    if proc["returncode"] != 0:
         raise RuntimeError(f"spark clean failed: {proc.stderr[-500:]}")
     job.result = {"output": "/scenic/cleaned/"}
 
@@ -244,19 +311,21 @@ def _op_hive_ddl(job: Job) -> None:
     for sql_file in ["ddl.sql", "views.sql"]:
         job.log_lines.append(f"  hive -f /opt/jobs/hive/{sql_file}")
         cmd = ["docker", "exec", "hive-server-1", "hive", "-f", f"/opt/jobs/hive/{sql_file}"]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if proc.stdout:
-            for line in proc.stdout.splitlines()[-20:]:
+        r = _run_in_container(*cmd, timeout=300)
+        proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
+        if proc["stdout"]:
+            for line in proc["stdout"].splitlines()[-20:]:
                 job.log_lines.append(f"    {line}")
-        if proc.returncode != 0:
-            raise RuntimeError(f"hive {sql_file} failed: {proc.stderr[-500:]}")
+        if proc["returncode"] != 0:
+            raise RuntimeError(f'hive {sql_file} failed: {proc["stderr"][-500:]}')
 
 
 def _op_hive_queries(job: Job) -> None:
     """跑 HiveQL 8 个分析查询"""
     job.log_lines.append("  hive -f /opt/jobs/hive/queries.sql")
     cmd = ["docker", "exec", "hive-server-1", "hive", "-f", "/opt/jobs/hive/queries.sql"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    r = _run_in_container(*cmd, timeout=600)
+    proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
     if proc.stdout:
         for line in proc.stdout.splitlines()[-30:]:
             job.log_lines.append(f"    {line}")
@@ -269,12 +338,13 @@ def _op_spark_train(job: Job) -> None:
         "docker", "exec", config.SPARK_CONTAINER,
         "bash", "/opt/jobs/spark-submit.sh", "ml-train",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-    if proc.stdout:
-        for line in proc.stdout.splitlines()[-60:]:
+    r = _run_in_container(*cmd, timeout=900)
+    proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
+    if proc["stdout"]:
+        for line in proc["stdout"].splitlines()[-60:]:
             job.log_lines.append(f"  {line}")
-    if proc.returncode != 0:
-        raise RuntimeError(f"spark train failed: {proc.stderr[-500:]}")
+    if proc["returncode"] != 0:
+        raise RuntimeError(f'spark train failed: {proc["stderr"][-500:]}')
 
 
 # 操作注册表
@@ -317,28 +387,40 @@ def trigger_pipeline(actions: List[str]) -> Job:
 # 状态查询
 # ============================================================
 def get_containers_status() -> List[Dict[str, Any]]:
-    """docker ps 查所有 17 个容器的状态"""
+    """List all 17 containers via Docker socket API (no docker CLI needed)"""
     try:
-        proc = subprocess.run(
-            ["docker", "ps", "-a", "--format", "{{.Names}}|{{.Status}}|{{.Image}}"],
-            capture_output=True, text=True, timeout=10,
-        )
+        from services.docker_client import list_containers
+        containers = list_containers(all=True)
     except Exception as e:
         return [{"error": str(e)}]
 
     out = []
-    for line in (proc.stdout or "").splitlines():
-        parts = line.split("|", 2)
-        if len(parts) >= 3:
-            name, status, image = parts
-            # 提取 Up 时间
-            healthy = "Up" in status and "unhealthy" not in status
-            out.append({
-                "name": name,
-                "status": status,
-                "image": image,
-                "healthy": healthy,
-            })
+    for c in containers:
+        # Names is a list in new Docker API (e.g. ["/demo-backend"])
+        names = c.get("Names", [])
+        if isinstance(names, list):
+            name = names[0].lstrip("/") if names else ""
+        else:
+            name = str(names).lstrip("/")
+        if not name:
+            continue
+        # 只看本项目（com.docker.compose.project）
+        labels = c.get("Labels", {}) or {}
+        if "com.docker.compose.project" in labels:
+            project = labels.get("com.docker.compose.project", "")
+            if project and "smart-scenic" not in project:
+                continue
+        state = c.get("State", "unknown")
+        status_text = c.get("Status", "")
+        image = c.get("Image", "")
+        healthy = state == "running"
+        out.append({
+            "name": name,
+            "status": status_text,
+            "image": image,
+            "state": state,
+            "healthy": healthy,
+        })
     return out
 
 
@@ -420,14 +502,12 @@ def get_datasets_status() -> Dict[str, Any]:
 def get_hdfs_status() -> Dict[str, Any]:
     """查 HDFS /scenic/ 目录"""
     try:
-        proc = subprocess.run(
-            ["docker", "exec", config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "-R", "/scenic/"],
-            capture_output=True, text=True, timeout=15,
-        )
+        r = _run_in_container(config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "-R", "/scenic/", timeout=15)
+        proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
         return {
-            "available": proc.returncode == 0,
-            "output": proc.stdout or "",
-            "error": proc.stderr if proc.returncode != 0 else None,
+            "available": proc["returncode"] == 0,
+            "output": proc["stdout"] or "",
+            "error": proc["stderr"] if proc["returncode"] != 0 else None,
         }
     except Exception as e:
         return {"available": False, "error": str(e)}

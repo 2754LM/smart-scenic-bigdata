@@ -400,29 +400,39 @@ services:
   # Loads PySpark models trained by spark-master (from /shared/models/)
   # ========================================================
   demo-backend:
-    image: python:3.10-slim
+    build:
+      context: ./docker/demo-backend
+      dockerfile: Dockerfile
+    image: smart-scenic/demo-backend:custom
     container_name: demo-backend
     mem_limit: 1280m
     hostname: demo-backend
     restart: unless-stopped
     working_dir: /app
-    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
     volumes:
       - ./app/backend:/app
       - shared-data:/shared:ro
+      # Mount Docker socket so backend can list containers / docker exec
+      # (used by admin_service to inspect containers & trigger jobs)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount CSV data so backend can load them into MySQL
+      - ./data:/app/data:ro
+      # Mount Spark/Hive jobs scripts for admin_service to trigger them
+      - ./app/jobs:/opt/jobs:ro
     environment:
       PYTHONUNBUFFERED: "1"
       PYSPARK_MODELS_DIR: /shared/models
       USE_PYSPARK_MODELS: "true"
+      DATA_RAW_DIR: /app/data/raw_data
+      JOBS_DIR: /opt/jobs
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       HADOOP_CONTAINER: hadoop-namenode
       HBASE_CONTAINER: hbase-master
       SPARK_CONTAINER: spark-master
-      # 容器内连 Kafka 用 PLAINTEXT listener（kafka-1:9092）
-      # 容器外开发模式用 localhost:19095（EXTERNAL listener）
       KAFKA_BOOTSTRAP: "kafka-1:9092"
     depends_on:
       - mysql
