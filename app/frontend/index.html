@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>总览大屏 - 智能景区大数据平台</title>
-  <link rel="stylesheet" href="static/css/main.css" />
+  <link rel="stylesheet" href="static/css/main.css?v=21" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
 </head>
 <body>
   <div class="container">
-    <!-- KPI 卡片 -->
+    <!-- KPI 卡片 (8 基础 + 2 ML 预测) -->
     <div class="kpi-grid" id="kpi-grid">
       <div class="kpi"><div class="label">游客总数</div><div class="value" id="kpi-visitors">--</div></div>
       <div class="kpi kpi-1"><div class="label">景点总数</div><div class="value" id="kpi-attractions">--</div></div>
@@ -19,6 +19,30 @@
       <div class="kpi kpi-1"><div class="label">平均游玩时长</div><div class="value" id="kpi-avg-duration">--</div></div>
       <div class="kpi kpi-2"><div class="label">消费笔数</div><div class="value" id="kpi-consume-count">--</div></div>
       <div class="kpi kpi-3"><div class="label">日均游客</div><div class="value" id="kpi-daily-avg">--</div></div>
+    </div>
+
+    <!-- ML 预测 KPI -->
+    <div class="kpi-grid" style="margin-top: 14px">
+      <div class="kpi" style="background: linear-gradient(135deg, #131a3a 0%, #1a2350 100%); border: 1px solid #00d4ff">
+        <div class="label" style="color:#00d4ff">📈 昨日实际游客</div>
+        <div class="value" id="kpi-yesterday">--</div>
+        <div class="label" style="font-size: 11px; margin-top: 4px">来源: visit_records</div>
+      </div>
+      <div class="kpi kpi-1" style="background: linear-gradient(135deg, #131a3a 0%, #1a2350 100%); border: 1px solid #a855f7">
+        <div class="label" style="color:#c084fc">🤖 预测明日游客</div>
+        <div class="value" id="kpi-tomorrow">--</div>
+        <div class="label" style="font-size: 11px; margin-top: 4px">基于历史 30 天 + 星期因子</div>
+      </div>
+      <div class="kpi kpi-2" style="background: linear-gradient(135deg, #131a3a 0%, #1a2350 100%); border: 1px solid #10b981">
+        <div class="label" style="color:#10b981">📊 变化趋势</div>
+        <div class="value" id="kpi-change">--</div>
+        <div class="label" style="font-size: 11px; margin-top: 4px">明日 vs 昨日</div>
+      </div>
+      <div class="kpi kpi-3" style="background: linear-gradient(135deg, #131a3a 0%, #1a2350 100%); border: 1px solid #f59e0b">
+        <div class="label" style="color:#f59e0b">🏆 最热门景点 (明日)</div>
+        <div class="value" id="kpi-top" style="font-size: 22px">--</div>
+        <div class="label" style="font-size: 11px; margin-top: 4px">预测客流量最高</div>
+      </div>
     </div>
 
     <!-- 时序图 -->
@@ -62,9 +86,9 @@
     </div>
   </div>
 
-  <script src="static/js/common.js?v=2"></script>
-  <script src="static/js/api.js?v=2"></script>
-  <script src="static/js/index.js?v=2"></script>
+  <script src="static/js/common.js?v=21"></script>
+  <script src="static/js/api.js?v=21"></script>
+  <script src="static/js/index.js?v=21"></script>
 </body>
 </html>
 

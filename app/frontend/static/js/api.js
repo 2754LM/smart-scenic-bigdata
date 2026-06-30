@@ -76,6 +76,16 @@ const API = {
   predictClustering:  ()      => api('/api/predict/clustering'),
   predictCompare:     ()      => api('/api/predict/compare'),
 
+  // 场景化预测（与景区业务结合）
+  tourismAttractionForecast: () => api('/api/predict-tourism/attraction-forecast'),
+  tourismAttractionRecommend: (aid, k=5) => api(`/api/predict-tourism/attraction-recommend?attraction_id=${aid}&top_k=${k}`),
+  tourismRouteRecommend: (q) => {
+    const qs = new URLSearchParams(q).toString();
+    return api(`/api/predict-tourism/route-recommend?${qs}`);
+  },
+  tourismVisitorProfile: (vid) => api(`/api/predict-tourism/visitor-profile/${vid}`),
+  tourismTomorrowSummary: () => api('/api/predict-tourism/tomorrow-summary'),
+
   // 实时数据
   visitRecent:        (limit=20) => api(`/api/realtime/visit-recent?limit=${limit}`),
   visitorProfile:     (id)    => api(`/api/realtime/visitor/${id}`),

@@ -60,11 +60,11 @@ async function refreshContainers() {
       '应用':      ['demo-backend'],
     };
     let html = '<table style="width:100%; border-collapse:collapse">';
-    html += '<tr><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">组件</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">容器</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">镜像</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">状态</th></tr>';
+    html += '<tr><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">组件</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">容器</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">镜像</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">状态</th></tr>';
     const byName = {};
     (data.containers || []).forEach(c => { byName[c.name] = c; });
     for (const [group, names] of Object.entries(groups)) {
-      html += `<tr><td colspan="4" style="padding:8px 6px 4px; font-weight:bold; background:#f8f9fa">${group}</td></tr>`;
+      html += `<tr><td colspan="4" style="padding:8px 6px 4px; font-weight:bold; background:#1a2350;color:#00d4ff">${group}</td></tr>`;
       for (const n of names) {
         const c = byName[n];
         if (!c) {
@@ -95,10 +95,10 @@ async function refreshModels() {
       el.innerHTML = '<p style="color:#999">暂无已训练模型</p>';
       return;
     }
-    let html = '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">模型</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">类型</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">训练时间</th></tr>';
+    let html = '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">模型</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">类型</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">训练时间</th></tr>';
     data.models.forEach(m => {
       const color = m.kind === 'regression' ? '#007bff' : m.kind === 'classification' ? '#28a745' : '#ffc107';
-      html += `<tr><td style="padding:4px 6px; font-family:monospace">${m.name}</td><td style="padding:4px 6px"><span style="background:${color}; color:#fff; padding:2px 6px; border-radius:3px; font-size:12px">${m.kind}</span></td><td style="padding:4px 6px; color:#666; font-size:12px">${(m.modified_at || '').substring(0, 19).replace('T', ' ')}</td></tr>`;
+      html += `<tr><td style="padding:4px 6px; font-family:monospace">${m.name}</td><td style="padding:4px 6px"><span style="background:${color}; color:#fff; padding:2px 6px; border-radius:3px; font-size:12px">${m.kind}</span></td><td style="padding:4px 6px; color:#9ca3af; font-size:12px">${(m.modified_at || '').substring(0, 19).replace('T', ' ')}</td></tr>`;
     });
     html += '</table>';
     el.innerHTML = html;
@@ -110,7 +110,7 @@ async function refreshDatasets() {
     const data = await API.adminDatasets();
     const el = document.getElementById('sys-datasets');
     if (!el) return;
-    let html = '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">MySQL 业务表</th><th style="text-align:right; padding:6px; border-bottom:1px solid #eee">行数</th></tr>';
+    let html = '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">MySQL 业务表</th><th style="text-align:right; padding:6px; border-bottom:1px solid #2a3b6e">行数</th></tr>';
     for (const t of ['t_attraction', 't_visitor', 't_consumption', 't_visit_record']) {
       const v = (data.mysql_tables || {})[t];
       const display = typeof v === 'number' ? v.toLocaleString() : (v || '—');
@@ -119,7 +119,7 @@ async function refreshDatasets() {
     }
     html += '</table>';
     html += '<h4 style="margin-top:12px">CSV 文件</h4>';
-    html += '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">文件</th><th style="text-align:right; padding:6px; border-bottom:1px solid #eee">行数</th><th style="text-align:right; padding:6px; border-bottom:1px solid #eee">大小</th></tr>';
+    html += '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">文件</th><th style="text-align:right; padding:6px; border-bottom:1px solid #2a3b6e">行数</th><th style="text-align:right; padding:6px; border-bottom:1px solid #2a3b6e">大小</th></tr>';
     for (const f of ['attractions.csv', 'visitors.csv', 'consumption.csv', 'visit_records.csv']) {
       const v = (data.csv_files || {})[f];
       if (v) {
@@ -143,7 +143,7 @@ async function refreshHdfs() {
       return;
     }
     const lines = (data.output || '').split('\n').slice(0, 30);
-    el.innerHTML = '<pre style="background:#f8f9fa; padding:8px; border-radius:4px; max-height:300px; overflow:auto; font-size:12px; margin:0">' +
+    el.innerHTML = '<pre style="background:#1a2350;color:#00d4ff; padding:8px; border-radius:4px; max-height:300px; overflow:auto; font-size:12px; margin:0">' +
       lines.map(l => l.replace(/</g, '&lt;')).join('\n') + '</pre>';
   } catch (e) { console.error('refreshHdfs', e); }
 }
@@ -171,7 +171,7 @@ function renderJobs(jobs) {
     el.innerHTML = '<p style="color:#999">暂无任务</p>';
     return;
   }
-  let html = '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">ID</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">名称</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">状态</th><th style="text-align:left; padding:6px; border-bottom:1px solid #eee">开始</th><th style="text-align:right; padding:6px; border-bottom:1px solid #eee">操作</th></tr>';
+  let html = '<table style="width:100%; border-collapse:collapse"><tr><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">ID</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">名称</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">状态</th><th style="text-align:left; padding:6px; border-bottom:1px solid #2a3b6e">开始</th><th style="text-align:right; padding:6px; border-bottom:1px solid #2a3b6e">操作</th></tr>';
   jobs.forEach(j => {
     const color = {
       'pending':  '#999',
@@ -184,7 +184,7 @@ function renderJobs(jobs) {
       <td style="padding:4px 6px; font-family:monospace; font-size:12px">${j.id}</td>
       <td style="padding:4px 6px">${j.name}</td>
       <td style="padding:4px 6px"><span style="background:${color}; color:#fff; padding:2px 6px; border-radius:3px; font-size:12px">${j.status}</span></td>
-      <td style="padding:4px 6px; color:#666; font-size:12px">${started}</td>
+      <td style="padding:4px 6px; color:#9ca3af; font-size:12px">${started}</td>
       <td style="padding:4px 6px; text-align:right"><button class="btn" style="padding:2px 8px; font-size:12px" onclick="showJobDetail('${j.id}')">详情</button></td>
     </tr>`;
   });

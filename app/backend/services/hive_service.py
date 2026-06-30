@@ -41,13 +41,33 @@ def daily_series(start: str, end: str) -> List[Dict[str, Any]]:
 
 
 def hourly_distribution() -> List[Dict[str, Any]]:
+    """24h 时段游客分布 — 仅统计景点开放时间内的记录。
+    数据原始时间是随机生成的（凌晨也有数据），与景点开放时间不符。
+    修正：JOIN 景点表，逐记录判断 HOUR(时间) 是否在该景点开放区间内（Python 端过滤）。
+    """
     rows = query(
-        "SELECT HOUR(时间) AS hour, COUNT(*) AS visitors FROM t_visit_record "
-        "GROUP BY HOUR(时间) ORDER BY hour"
+        "SELECT vr.时间, vr.景点ID, a.开放时间 "
+        "FROM t_visit_record vr "
+        "JOIN t_attraction a ON vr.景点ID = a.景点ID"
     )
+    import re
+    from datetime import datetime
     full = {h: 0 for h in range(24)}
     for r in rows:
-        full[r["hour"]] = r["visitors"]
+        open_str = r.get("开放时间") or ""
+        m = re.match(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", open_str)
+        if not m:
+            continue
+        oh, ch = int(m.group(1)), int(m.group(3))
+        ts = r["时间"]
+        h = ts.hour if hasattr(ts, "hour") else datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S").hour
+        # 判断是否在开放时段（处理跨夜）
+        if oh <= ch:
+            in_range = oh <= h < ch
+        else:  # 跨夜 22:00-02:00
+            in_range = h >= oh or h < ch
+        if in_range:
+            full[h] += 1
     return [{"hour": h, "visitors": full[h]} for h in range(24)]
 
 
@@ -76,18 +96,45 @@ def age_gender() -> List[Dict[str, Any]]:
 
 
 def type_summary() -> List[Dict[str, Any]]:
-    return query(
-        "SELECT "
-        "  a.类型, "
-        "  COUNT(DISTINCT a.景点ID) AS 景点数, "
-        "  COUNT(DISTINCT vr.游客ID) AS 游客数, "
-        "  COALESCE(SUM(c.消费金额), 0) AS 消费总额, "
-        "  ROUND(COALESCE(AVG(vr.游玩时长), 0), 2) AS 平均时长 "
-        "FROM t_attraction a "
-        "LEFT JOIN t_visit_record vr ON a.景点ID = vr.景点ID "
-        "LEFT JOIN t_consumption c ON a.景点ID = c.景点ID "
-        "GROUP BY a.类型 ORDER BY 游客数 DESC"
+    """聚合查询：分阶段执行避免大表 JOIN 慢。"""
+    # 1. 景点 + 游玩统计（基于 t_visit_record 聚合到景点）
+    visit_df = _query_df(
+        "SELECT vr.景点ID, COUNT(DISTINCT vr.游客ID) AS 游客数, "
+        "       AVG(vr.游玩时长) AS 平均时长 "
+        "FROM t_visit_record vr GROUP BY vr.景点ID"
     )
+    # 2. 景点 + 消费统计（基于 t_consumption 聚合到景点）
+    cons_df = _query_df(
+        "SELECT c.景点ID, SUM(c.消费金额) AS 消费总额 "
+        "FROM t_consumption c GROUP BY c.景点ID"
+    )
+    # 3. 景点主表
+    atts = query("SELECT 景点ID, 景点名称, 类型 FROM t_attraction")
+    if not atts:
+        return []
+    atts_df = pd.DataFrame(atts)
+    atts_df["景点ID"] = atts_df["景点ID"].astype(str)
+    if not visit_df.empty:
+        visit_df["景点ID"] = visit_df["景点ID"].astype(str)
+        atts_df = atts_df.merge(visit_df, on="景点ID", how="left")
+    if not cons_df.empty:
+        cons_df["景点ID"] = cons_df["景点ID"].astype(str)
+        atts_df = atts_df.merge(cons_df, on="景点ID", how="left")
+    atts_df = atts_df.fillna({"游客数": 0, "平均时长": 0.0, "消费总额": 0.0})
+
+    # 4. 按 类型 聚合
+    grouped = atts_df.groupby("类型").agg(
+        景点数=("景点ID", "nunique"),
+        游客数=("游客数", "sum"),
+        消费总额=("消费总额", "sum"),
+        平均时长=("平均时长", "mean"),
+    ).reset_index()
+    # 转为 python float（避免 numpy float 序列化错误）
+    grouped["平均时长"] = grouped["平均时长"].astype(float).round(2)
+    grouped["消费总额"] = grouped["消费总额"].astype(float).round(2)
+    grouped["游客数"] = grouped["游客数"].astype(int)
+    grouped["景点数"] = grouped["景点数"].astype(int)
+    return grouped.sort_values("游客数", ascending=False).to_dict("records")
 
 
 def fpgrowth_rules() -> List[Dict[str, Any]]:

@@ -3,64 +3,210 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>模型预测 - 智能景区大数据平台</title>
-  <link rel="stylesheet" href="static/css/main.css" />
+  <title>智能预测中心 - 智能景区大数据平台</title>
+  <link rel="stylesheet" href="static/css/main.css?v=21" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <style>
+    .scenario-card {
+      background: linear-gradient(135deg, #131a3a 0%, #1a2350 100%);
+      border: 1px solid #2a3b6e;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .scenario-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #00d4ff, #a855f7);
+    }
+    .scenario-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .scenario-desc {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-bottom: 16px;
+    }
+    .scenario-icon {
+      font-size: 28px;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .scenario-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .scenario-row > * {
+      flex-shrink: 0;
+    }
+    .result-block {
+      margin-top: 16px;
+      padding: 14px 18px;
+      background: rgba(0, 212, 255, 0.06);
+      border-left: 3px solid #00d4ff;
+      border-radius: 4px;
+    }
+    .result-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #00d4ff;
+      line-height: 1.1;
+    }
+    .result-label {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+    .grid-2-scenario {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 1200px) {
+      .grid-2-scenario { grid-template-columns: 1fr; }
+    }
+    .profile-box {
+      padding: 10px 14px;
+      background: #0a0e27;
+      border-radius: 4px;
+      margin-top: 6px;
+    }
+    .profile-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px dashed #2a3b6e;
+    }
+    .profile-row:last-child { border-bottom: none; }
+    .profile-row .k { color: #9ca3af; }
+    .profile-row .v { color: #fff; font-weight: 500; }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      margin-right: 4px;
+    }
+    .tag-blue   { background: rgba(0, 212, 255, 0.15); color: #00d4ff; }
+    .tag-purple { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+    .tag-green  { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .tag-yellow { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+    .tag-red    { background: rgba(239, 68, 68, 0.15);  color: #ef4444; }
+  </style>
 </head>
 <body>
   <div class="container">
-    <!-- 实时预测表单 -->
+    <!-- 顶部标题 -->
     <div class="card" style="margin-bottom: 16px">
-      <div class="card-title">
-        <span>实时预测</span>
-        <span class="subtitle">基于 Spark 训练的 sklearn 模型 (joblib)</span>
+      <div class="card-title" style="border-bottom: 1px solid #2a3b6e; padding-bottom: 10px">
+        <span style="font-size:18px">🤖 智能预测中心</span>
+        <span class="subtitle">Spark 训练 · sklearn 推理 · 毫秒级响应</span>
       </div>
-
-      <div class="form-row" style="margin-bottom: 16px">
-        <label>任务类型:</label>
-        <select id="pred-type">
-          <option value="consumption_amount">消费金额预测 (回归)</option>
-          <option value="daily_visitor">日客流量预测 (回归)</option>
-          <option value="high_value_visitor">高价值游客识别 (分类)</option>
-          <option value="cluster">游客聚类</option>
-        </select>
+      <div style="display:flex; gap:30px; padding-top: 8px">
+        <div><span class="text-muted">训练引擎:</span> <span class="text-accent">PySpark MLlib</span></div>
+        <div><span class="text-muted">推理引擎:</span> <span class="text-accent">sklearn (joblib)</span></div>
+        <div><span class="text-muted">响应延迟:</span> <span class="text-accent">&lt; 10ms</span></div>
+        <div><span class="text-muted">训练特征:</span> <span class="text-accent">6 维 (age/pc/avg/vc/dur/ua)</span></div>
       </div>
-
-      <!-- 消费金额特征（6 个 Spark 训练特征） -->
-      <div id="form-consumption" class="form-block">
-        <div class="form-row">
-          <label>年龄 (age):</label>
-          <input type="number" id="c-age" value="35" min="0" max="120" />
-          <label>历史购买次数 (purchase_count):</label>
-          <input type="number" id="c-pc" value="10" min="0" />
-          <label>历史平均消费 (avg_amount):</label>
-          <input type="number" id="c-avg" value="500" min="0" />
-          <label>历史游玩次数 (visit_count):</label>
-          <input type="number" id="c-vc" value="10" min="0" />
-          <label>平均游玩时长 h (avg_duration):</label>
-          <input type="number" id="c-dur" value="4.0" min="0" step="0.1" />
-          <label>访问过的景点数 (unique_attractions):</label>
-          <input type="number" id="c-ua" value="5" min="0" />
-        </div>
-        <div style="color:#9ca3af;font-size:12px;margin-top:4px">
-          特征: [age, purchase_count, avg_amount, visit_count, avg_duration, unique_attractions] 来自 Spark 训练
-        </div>
-      </div>
-
-      <!-- 所有任务用同一组特征（Spark 训练的 6 个特征） -->
-
-      <div class="form-row">
-        <button class="btn btn-primary" id="btn-predict">开始预测</button>
-        <span id="model-info" class="text-muted"></span>
-      </div>
-      <div id="pred-result"></div>
     </div>
 
-    <!-- 真实 vs 预测对比折线图（按时间分训练/测试集） -->
+    <!-- 场景 1: 客流预测 -->
+    <div class="scenario-card">
+      <div class="scenario-title"><span class="scenario-icon">📈</span>景点明日客流量预测</div>
+      <div class="scenario-desc">基于每个景点最近 30 天的日均游客 + 周末/工作日因子，预测明天的客流量</div>
+
+      <div id="forecast-content" style="display:grid; grid-template-columns: 2fr 1fr; gap:16px">
+        <div id="chart-forecast" style="height: 320px"></div>
+        <div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:6px">📊 预测详情（按预测值排序）</div>
+          <div id="forecast-list" style="max-height:300px; overflow-y:auto; font-size:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 场景 2: 智能推荐 + 场景 3: 路线规划 -->
+    <div class="grid-2-scenario">
+      <!-- 智能推荐 -->
+      <div class="scenario-card">
+        <div class="scenario-title"><span class="scenario-icon">🎯</span>景点智能推荐</div>
+        <div class="scenario-desc">基于历史游玩序列，分析"游玩 A 后最常去的下一个景点"</div>
+
+        <div class="scenario-row">
+          <label style="color:#b0c4de; font-size:13px">我刚游玩了:</label>
+          <select id="rec-from" style="min-width:200px"></select>
+          <button class="btn btn-primary" id="btn-recommend">查询推荐</button>
+        </div>
+
+        <div id="rec-result" style="margin-top: 14px"></div>
+      </div>
+
+      <!-- 路线规划 -->
+      <div class="scenario-card">
+        <div class="scenario-title"><span class="scenario-icon">🗺️</span>游玩路线规划</div>
+        <div class="scenario-desc">根据类型偏好 + 预算 + 可用时间，智能推荐游玩路线</div>
+
+        <div class="scenario-row">
+          <label style="color:#b0c4de; font-size:13px">类型:</label>
+          <select id="route-type" style="min-width:100px">
+            <option value="">不限</option>
+            <option>文化</option>
+            <option>娱乐</option>
+            <option>自然</option>
+            <option>运动</option>
+          </select>
+          <label style="color:#b0c4de; font-size:13px">预算:</label>
+          <input type="number" id="route-budget" value="500" style="width:80px" />
+          <label style="color:#b0c4de; font-size:13px">时间(h):</label>
+          <input type="number" id="route-hours" value="8" step="0.5" style="width:60px" />
+          <button class="btn btn-primary" id="btn-route">生成路线</button>
+        </div>
+
+        <div id="route-result" style="margin-top: 14px"></div>
+      </div>
+    </div>
+
+    <!-- 场景 4: 游客画像 -->
+    <div class="scenario-card">
+      <div class="scenario-title"><span class="scenario-icon">👤</span>游客画像（消费预测 + 高价值识别 + 群体归类）</div>
+      <div class="scenario-desc">输入游客 ID，模型自动分析消费能力、群体归属、运营建议</div>
+
+      <div class="scenario-row">
+        <label style="color:#b0c4de; font-size:13px">游客 ID:</label>
+        <input type="text" id="profile-vid" value="1" style="width:100px" />
+        <button class="btn btn-primary" id="btn-profile">生成画像</button>
+        <span class="text-muted" style="font-size:12px">输入 1-10000 范围内的 ID</span>
+      </div>
+
+      <div id="profile-result" style="margin-top: 14px"></div>
+    </div>
+
+    <!-- 模型对比 + 真实 vs 预测 -->
     <div class="card" style="margin-bottom: 16px">
       <div class="card-title">
-        <span>真实 vs 预测对比</span>
-        <span class="subtitle">每日消费金额 · 训练集: 2023-01-01 ~ 2023-08-31 · 测试集: 2023-09-01 ~ 2023-12-31</span>
+        <span>📊 模型性能对比</span>
+        <span class="subtitle">Spark 训练后导出到 sklearn (joblib)</span>
+      </div>
+      <div class="grid-3" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px">
+        <div class="card-body" id="table-regression" style="background:#0a0e27; padding:12px; border-radius:4px"></div>
+        <div class="card-body" id="table-classification" style="background:#0a0e27; padding:12px; border-radius:4px"></div>
+        <div class="card-body" id="table-clustering" style="background:#0a0e27; padding:12px; border-radius:4px"></div>
+      </div>
+    </div>
+
+    <!-- 真实 vs 预测 -->
+    <div class="card" style="margin-bottom: 16px">
+      <div class="card-title">
+        <span>📉 每日消费金额: 真实 vs 预测</span>
+        <span class="subtitle">按时间分割训练/测试集 · sklearn Ridge 模型</span>
       </div>
       <div class="form-row" style="margin-bottom: 12px">
         <label>起始:</label>
@@ -74,27 +220,10 @@
       </div>
       <div id="chart-compare" style="height: 360px"></div>
     </div>
-
-    <!-- 模型对比 -->
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-title">回归模型对比 <span class="subtitle">Linear / Lasso / Ridge / RF</span></div>
-        <div class="card-body" id="table-regression"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">分类模型对比 <span class="subtitle">RandomForest</span></div>
-        <div class="card-body" id="table-classification"></div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top: 16px">
-      <div class="card-title">聚类解释 <span class="subtitle">KMeans (k=4) silhouette=0.36</span></div>
-      <div class="card-body" id="table-clustering"></div>
-    </div>
   </div>
 
-  <script src="static/js/common.js?v=4"></script>
-  <script src="static/js/api.js?v=4"></script>
-  <script src="static/js/predict.js?v=4"></script>
+  <script src="static/js/common.js?v=21"></script>
+  <script src="static/js/api.js?v=21"></script>
+  <script src="static/js/predict.js?v=21"></script>
 </body>
 </html>

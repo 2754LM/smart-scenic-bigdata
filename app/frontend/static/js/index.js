@@ -46,6 +46,21 @@ async function loadDailyAvg() {
   } catch (e) { /* ignore */ }
 }
 
+async function loadTomorrowSummary() {
+  try {
+    const r = await API.tourismTomorrowSummary();
+    if (r.error) return;
+    document.getElementById('kpi-yesterday').innerHTML = fmtInt(r.昨日总游客) + ' <span class="unit">人</span>';
+    document.getElementById('kpi-tomorrow').innerHTML = fmtInt(r.预测明日) + ' <span class="unit">人</span>';
+    const change = r.变化 || 0;
+    const sign = change > 0 ? '↑' : (change < 0 ? '↓' : '·');
+    const color = change > 0 ? '#10b981' : (change < 0 ? '#ef4444' : '#9ca3af');
+    document.getElementById('kpi-change').innerHTML = `<span style="color:${color}">${sign} ${Math.abs(change)}%</span>`;
+    const top = r.最热门景点 || {};
+    document.getElementById('kpi-top').innerHTML = top.name ? `${escapeHtml(top.name)} (${top.predicted}人)` : '--';
+  } catch (e) { console.error('tomorrow summary fail', e); }
+}
+
 async function loadVisitorTrend() {
   const el = document.getElementById('chart-visitor-trend');
   const chart = echarts.init(el);
@@ -215,6 +230,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await Promise.all([
     loadKPIs(),
     loadDailyAvg(),
+    loadTomorrowSummary(),
     loadVisitorTrend(),
     loadConsumeTrend(),
     loadAttractionRank(),
