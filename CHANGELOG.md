@@ -15,6 +15,7 @@
 | P2 | 模块化后端 API + 4 页前端可视化 + ML + HBase 实时 | ✅ | `develop` (PR #1 已合) |
 | P3 | 作业要求补全（Hive 分区表 + HBase 游玩记录 + 营销建议） | ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
 | P4 | Spark Structured Streaming + 模型持久化 HDFS + main.py 整合 | ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
+| P5 | 数据扩容（22 万行 CSV）+ 真实环境验证手册 | ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
 
 ---
 
@@ -121,6 +122,61 @@ docker exec spark-master bash /opt/jobs/spark/run-streaming.sh
 |------|------|------|
 | ✏️ 改 | `docs/作业要求.md` | 加 P4 阶段对照表 + 100% 完成声明 + Spark Streaming 启动指南 |
 | ✏️ 改 | `CHANGELOG.md` | 本文档 |
+
+---
+
+## P5 — 数据扩容 + 真实环境验证手册（本次提交）
+
+### Commit
+```
+<待生成> feat(p5): 数据扩容 22 万行 CSV 生成器 + 真实环境验证手册
+```
+
+### 任务 1：数据扩容（22 万行）
+**作业要求**："6.3 数据处理与存储 - 提供多个 CSV 格式的初始数据集"
+
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✨ 新建 | `scripts/generate-raw-data.py` | 纯 Python stdlib（无 pandas/numpy 依赖）数据生成器<br>输出 5 个 CSV，**总 220,210 行**（10 景点 + 200 游客 + 10w 消费 + 10w 游玩 + 2w 评论）<br>字段名严格对齐 `mysql-init/01-init-business.sql` 中文 schema<br>支持 `--consumption / --visit / --review / --visitors` 自定义行数<br>随机种子 20250629 可复现 |
+
+**实际生成结果**（smoke test 已验证）：
+```
+attractions.csv       10 行       0.00 MB
+visitors.csv          200 行      0.01 MB
+consumption.csv       100,000 行  5.07 MB
+visit_records.csv     100,000 行  4.29 MB
+reviews.csv           20,000 行   1.24 MB
+─────────────────────────────────────────
+合计                  220,210 行  10.6 MB
+```
+
+**用法**：
+```bash
+# 默认 22 万行
+python scripts/generate-raw-data.py
+
+# 自定义行数（如 50 万）
+python scripts/generate-raw-data.py --consumption 200000 --visit 200000 --review 100000
+```
+
+### 任务 2：真实环境验证手册
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✨ 新建 | `docs/部署测试-手动清单.md` | 12 步 + 26 项验证清单<br>覆盖 P0 平台启动 → P1 Spark → P2 后端 → P3 HBase → P4 Streaming → P4 模型持久化<br>每步含命令 + 期望输出 + 常见问题<br>含 26 项打勾式 checklist<br>时间估算（首次 30-45 分钟 / 后续 10-15 分钟）|
+
+**手册结构**：
+1. 前置条件检查（docker / 资源 / 端口 / 镜像加速器）
+2. 启动大数据平台（P0）
+3. 验证 P0 数据 + 业务表
+4. 生成/导入数据（P5 数据扩容）
+5. 启动 P1 Spark 作业（clean / ML / Hive）
+6. 验证 P2 后端（**新 main.py** + 32 端点）
+7. 启动前端 4 页可视化
+8. 验证 P3 新增功能（HBase 3 张新表）
+9. 启动 P4 Spark Streaming（首次下载包）
+10. 验证 P4 模型持久化
+11. 端到端业务场景（7 场景）
+12. 性能/资源 + 清理
 
 ---
 
