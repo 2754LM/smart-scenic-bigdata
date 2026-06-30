@@ -69,6 +69,7 @@ const API = {
   analysisAgeGroup:   ()      => api('/api/analysis/age-group'),
   analysisTypeSummary:()      => api('/api/analysis/type-summary'),
   analysisFpGrowth:   ()      => api('/api/analysis/fpgrowth'),
+  analysisMarketingSuggestions: () => api('/api/analysis/marketing-suggestions'),
 
   // predict
   predict:            (type, features) => api('/api/predict', {

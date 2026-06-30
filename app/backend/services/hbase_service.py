@@ -279,9 +279,168 @@ def attraction_stat(scenic_id: int) -> Optional[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------
-# Demo seeding: write a few rows so the page has something to show
-# when HBase is empty.
+# scenic_visit_record: 游玩记录查询（作业要求：时间/游客ID/景点ID/游玩时长）
+# scenic_visitor_profile: 游客画像（聚合）
+# scenic_attraction_heat: 景点热度（聚合）
 # ----------------------------------------------------------------------
+def query_visit_records(
+    visitor_id: Optional[str] = None,
+    attraction_id: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """快速查询 scenic_visit_record 表（row_key: V{visitor_id}_{visit_time}）。
+
+    - 按 visitor_id 前缀扫描（最高效）
+    - 可选 attraction_id / 时间范围二次过滤
+    - Docker 不可用时返回合成数据
+    """
+    if not _docker_available():
+        syn = _ensure_syn()
+        out = []
+        for it in syn:
+            if visitor_id and str(visitor_id) != it["visitor_id"]:
+                continue
+            if attraction_id and str(attraction_id) != it["scenic_id"]:
+                continue
+            out.append({
+                "visitor_id": it["visitor_id"],
+                "attraction_id": it["scenic_id"],
+                "visit_time": it["ts"],
+                "duration_hours": round(1.0 + (int(it["ts"]) % 50) / 10.0, 2),
+            })
+        return out[:limit]
+
+    # 优先按 visitor_id 前缀扫
+    if visitor_id:
+        rk_prefix = f"V{visitor_id}_"
+    else:
+        rk_prefix = "V"  # 全表扫
+    cmds = (
+        'exists "scenic_visit_record"\n'
+        f'scan "scenic_visit_record", {{ROWPREFIXFILTER => "{rk_prefix}", LIMIT => {limit * 5}}}\n'
+    )
+    out = hbase_shell(cmds)
+    cells = _parse_hbase_scan(out)
+    # 按 row_key 聚合
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for c in cells:
+        rk = c["row_key"]
+        grouped.setdefault(rk, {"row_key": rk})
+        grouped[rk][c["qualifier"]] = c["value"]
+    # 转成统一格式
+    items: List[Dict[str, Any]] = []
+    for rk, f in grouped.items():
+        visit_time = f.get("visit_time", "")
+        if start_time and visit_time < start_time:
+            continue
+        if end_time and visit_time > end_time:
+            continue
+        if attraction_id and f.get("attraction_id") != str(attraction_id):
+            continue
+        items.append({
+            "visitor_id": f.get("visitor_id", ""),
+            "attraction_id": f.get("attraction_id", ""),
+            "visit_time": visit_time,
+            "duration_hours": float(f.get("duration_hours", 0) or 0),
+        })
+    # 按 visit_time 倒序
+    items.sort(key=lambda x: x["visit_time"], reverse=True)
+    return items[:limit]
+
+
+def get_visitor_profile_from_hbase(visitor_id: int) -> Optional[Dict[str, Any]]:
+    """从 scenic_visitor_profile 表读游客画像（按游客聚合后的统计）。"""
+    if not _docker_available():
+        syn = [it for it in _ensure_syn() if it["visitor_id"] == str(visitor_id)]
+        if not syn:
+            return None
+        return {
+            "visitor_id": str(visitor_id),
+            "total_visits": len(syn),
+            "total_duration": round(len(syn) * 1.5, 2),
+            "last_attraction": syn[0]["scenic_id"],
+            "last_visit_time": syn[0]["ts"],
+        }
+    rk = f"V{visitor_id:08d}"
+    cmds = f'get "scenic_visitor_profile", "{rk}"\n'
+    out = hbase_shell(cmds)
+    cells = _parse_hbase_scan(out)
+    if not cells:
+        return None
+    fields: Dict[str, Any] = {"visitor_id": str(visitor_id)}
+    for c in cells:
+        if c["row_key"] != rk:
+            continue
+        q = c["qualifier"]
+        v = c["value"]
+        if q in ("total_visits", "total_visitors"):
+            try:
+                fields[q] = int(v)
+            except Exception:
+                fields[q] = v
+        elif q in ("total_duration", "duration_hours"):
+            try:
+                fields[q] = float(v)
+            except Exception:
+                fields[q] = v
+        else:
+            fields[q] = v
+    return fields
+
+
+def get_attraction_heat_from_hbase(scenic_id: int) -> Optional[Dict[str, Any]]:
+    """从 scenic_attraction_heat 表读景点热度（按景点聚合后的统计）。"""
+    if not _docker_available():
+        syn = [it for it in _ensure_syn() if it["scenic_id"] == str(scenic_id)]
+        if not syn:
+            return {
+                "attraction_id": str(scenic_id),
+                "total_visitors": 0,
+                "total_duration": 0.0,
+                "last_visit_time": None,
+            }
+        return {
+            "attraction_id": str(scenic_id),
+            "total_visitors": len({it["visitor_id"] for it in syn}),
+            "total_duration": round(len(syn) * 1.5, 2),
+            "last_visit_time": syn[0]["ts"],
+        }
+    rk = f"A{scenic_id:04d}"
+    cmds = f'get "scenic_attraction_heat", "{rk}"\n'
+    out = hbase_shell(cmds)
+    cells = _parse_hbase_scan(out)
+    if not cells:
+        return {
+            "attraction_id": str(scenic_id),
+            "total_visitors": 0,
+            "total_duration": 0.0,
+            "last_visit_time": None,
+            "_note": "no data in HBase",
+        }
+    fields: Dict[str, Any] = {"attraction_id": str(scenic_id)}
+    for c in cells:
+        if c["row_key"] != rk:
+            continue
+        q = c["qualifier"]
+        v = c["value"]
+        if q in ("total_visits", "total_visitors"):
+            try:
+                fields[q] = int(v)
+            except Exception:
+                fields[q] = v
+        elif q in ("total_duration", "duration_hours"):
+            try:
+                fields[q] = float(v)
+            except Exception:
+                fields[q] = v
+        else:
+            fields[q] = v
+    return fields
+
+
+
 def seed_if_empty() -> bool:
     """If scenic_realtime is empty, write 30 demo rows so front-end isn't blank.
 

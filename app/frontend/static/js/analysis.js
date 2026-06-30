@@ -181,6 +181,37 @@ async function loadFpGrowth() {
   } catch (e) { renderError(el, '加载失败'); }
 }
 
+
+// ============== 营销建议（作业要求：找出主要游客群体，并提出营销建议） ==============
+async function loadMarketingSuggestions() {
+  const el = document.getElementById('card-marketing');
+  if (!el) return;
+  renderLoading(el);
+  try {
+    const r = await API.analysisMarketingSuggestions();
+    const items = r.suggestions || [];
+    if (!items.length) { renderEmpty(el, '暂无营销建议'); return; }
+
+    el.innerHTML = items.map(s => {
+      const support = (s.supporting || []).slice(0, 6).map(x => {
+        const txt = Object.entries(x)
+          .filter(([k]) => k !== 'antecedent' && k !== 'consequent')
+          .map(([k, v]) => `<b>${escapeHtml(k)}</b>: ${escapeHtml(String(v))}`)
+          .join(' · ');
+        return `<div class="support-row">${txt}</div>`;
+      }).join('');
+      return `
+        <div class="suggestion-item">
+          <div class="suggestion-tag">${escapeHtml(s.category)}</div>
+          <div class="suggestion-finding"><b>结论:</b> ${escapeHtml(s.finding || '')}</div>
+          <div class="suggestion-advice"><b>建议:</b> ${escapeHtml(s.advice || '')}</div>
+          ${support ? `<div class="suggestion-support">${support}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (e) { renderError(el, '加载失败'); }
+}
+
 window.addEventListener('resize', () => {
   document.querySelectorAll('[id^="chart-"]').forEach(el => {
     const inst = echarts.getInstanceByDom(el);
@@ -200,5 +231,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('filter-attraction').value = '';
     loadDaily(); loadFpGrowth();
   });
-  await Promise.all([loadDaily(), loadHourly(), loadType(), loadRegion(), loadAge(), loadFpGrowth()]);
+  await Promise.all([loadDaily(), loadHourly(), loadType(), loadRegion(), loadAge(), loadFpGrowth(), loadMarketingSuggestions()]);
 });

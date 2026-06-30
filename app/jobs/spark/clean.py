@@ -34,7 +34,8 @@ spark.sparkContext.setLogLevel("WARN")
 
 # ============== 输入路径 ==============
 HDFS_IN = "hdfs://hadoop-namenode:9000/scenic/sqoop"
-HDFS_OUT = "hdfs://hadoop-namenode:9000/scenic/cleaned"
+HDFS_OUT = "hdfs://hadoop-namenode:9000/scenic/cleaned"           # 非分区（供 ddl.sql ext_t_*）
+HDFS_OUT_PART = "hdfs://hadoop-namenode:9000/scenic/cleaned_part"  # 分区版（供 partitioned-tables.sql part_t_*）
 
 
 # ============== 1. 景点表清洗 ==============
@@ -126,6 +127,12 @@ df_cons_clean = df_cons_clean.withColumn(
 )
 df_cons_clean.write.mode("overwrite").parquet(f"{HDFS_OUT}/t_consumption")
 
+# 分区版：按 consume_date 分区
+df_cons_clean.withColumn("dt", F.date_format("consume_date", "yyyy-MM-dd")) \
+    .write.mode("overwrite") \
+    .partitionBy("dt") \
+    .parquet(f"{HDFS_OUT_PART}/t_consumption")
+
 
 # ============== 4. 游玩记录表清洗 ==============
 print("[4/4] clean t_visit_record ...", flush=True)
@@ -152,6 +159,12 @@ df_vr_clean = df_vr_clean.select(
 df_vr_clean = df_vr_clean.withColumn("duration_hours", F.col("duration_hours").cast(DoubleType()))
 df_vr_clean = df_vr_clean.withColumn("visit_date", F.to_date("visit_time"))
 df_vr_clean.write.mode("overwrite").parquet(f"{HDFS_OUT}/t_visit_record")
+
+# 分区版：按 visit_date 分区
+df_vr_clean.withColumn("dt", F.date_format("visit_date", "yyyy-MM-dd")) \
+    .write.mode("overwrite") \
+    .partitionBy("dt") \
+    .parquet(f"{HDFS_OUT_PART}/t_visit_record")
 
 
 # ============== 完成 ==============

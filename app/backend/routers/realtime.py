@@ -42,6 +42,44 @@ def attraction_stat(attraction_id: int):
     return {"source": "hbase", "data": data}
 
 
+# ============== scenic_visit_record 作业要求端点 ==============
+@router.get("/visit-records")
+def list_visit_records(
+    visitor_id:    str = Query(None, description="按游客ID前缀查"),
+    attraction_id: str = Query(None, description="按景点ID过滤"),
+    start_time:    str = Query(None, description="开始时间 yyyy-MM-dd HH:mm:ss"),
+    end_time:      str = Query(None, description="结束时间"),
+    limit:         int = Query(50, ge=1, le=500),
+):
+    """scenic_visit_record 表快速查询（时间/游客ID/景点ID/游玩时长）。"""
+    data = hbase_svc.query_visit_records(
+        visitor_id=visitor_id,
+        attraction_id=attraction_id,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit,
+    )
+    return {"source": "hbase", "count": len(data), "data": data}
+
+
+@router.get("/visitor-profile/{visitor_id}")
+def visitor_profile_from_hbase(visitor_id: int):
+    """scenic_visitor_profile 表 - 游客画像（聚合统计）。"""
+    data = hbase_svc.get_visitor_profile_from_hbase(visitor_id)
+    if data is None:
+        raise HTTPException(404, f"visitor {visitor_id} not found in HBase")
+    return {"source": "hbase", "data": data}
+
+
+@router.get("/attraction-heat/{attraction_id}")
+def attraction_heat_from_hbase(attraction_id: int):
+    """scenic_attraction_heat 表 - 景点热度（聚合统计）。"""
+    data = hbase_svc.get_attraction_heat_from_hbase(attraction_id)
+    if data is None:
+        raise HTTPException(404, f"attraction {attraction_id} not found in HBase")
+    return {"source": "hbase", "data": data}
+
+
 # ============== 写接口（Kafka 发布） ==============
 class ReviewIn(BaseModel):
     visitor_id:   str   = Field(..., description="游客ID")

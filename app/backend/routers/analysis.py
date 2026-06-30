@@ -44,3 +44,11 @@ def type_summary():
 def fpgrowth():
     data = hive_svc.fpgrowth_rules()
     return {"source": "syn", "count": len(data), "data": data}
+
+
+@router.get("/marketing-suggestions")
+def marketing_suggestions():
+    """基于游客分群（年龄/地区/消费/类型/关联规则）输出营销建议。
+    作业要求："找出主要游客群体，并提出营销建议"。
+    """
+    return hive_svc.marketing_suggestions()
