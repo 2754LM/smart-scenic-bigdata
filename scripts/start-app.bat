@@ -47,6 +47,10 @@ if not exist "data\raw_data\attractions.csv" (
 )
 echo [OK]   Pre-flight OK: containers up, CSVs in data\raw_data\
 echo(
+echo NOTE: this runs the 4-step DATA pipeline only (load_csv, sqoop,
+echo   spark_clean, hive_ddl). Models in /shared/models/sklearn/ are
+echo   preserved. To (re)train: scripts\start-train.bat.
+echo(
 
 REM ---------- Run the Python driver inside demo-backend ----------
 REM scripts/run_pipeline.py is mounted into the container at /app/scripts/

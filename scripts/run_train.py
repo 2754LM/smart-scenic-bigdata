@@ -1,5 +1,6 @@
-"""Drive the full pipeline via the API. Runs inside demo-backend container.
-Called by scripts\start-app.bat. All HTTP, polling, error handling here.
+"""Run model training (spark_train + fpgrowth) on demand.
+Used by scripts\start-train.bat. Models are written to
+/shared/models/sklearn/ and fpgrowth rules to /shared/models/.
 """
 import os
 import sys
@@ -29,7 +30,6 @@ def get(path):
 
 
 def wait_for_job(job_id, label, timeout_min=15):
-    """Poll until status is success/failed. Returns True on success."""
     deadline = time.time() + timeout_min * 60
     while time.time() < deadline:
         try:
@@ -62,7 +62,7 @@ def submit(action, label):
 
 def main():
     print("=" * 60)
-    print(" Smart Scenic BigData - Data Pipeline")
+    print(" Smart Scenic BigData - Model Training")
     print("=" * 60)
 
     try:
@@ -72,39 +72,44 @@ def main():
         sys.exit(1)
     print("[OK] demo-backend reachable")
 
-    # Default pipeline: 4 steps (no training). Models in
-    # /shared/models/sklearn/ are preserved across runs.
-    # To (re)train, run scripts\start-train.bat.
-    actions = [
-        ("load_csv",    "1/4 load_csv"),
-        ("sqoop",       "2/4 sqoop"),
-        ("spark_clean", "3/4 spark_clean"),
-        ("hive_ddl",     "4/4 hive_ddl"),
-    ]
-
     ok = True
-    for action, label in actions:
-        if not submit(action, label):
+    if not submit("spark_train", "1/2 spark_train"):
+        ok = False
+
+    if ok:
+        # FPGrowth runs in spark-master container via spark-submit
+        # (it needs PySpark context; direct python fails).
+        print("[2/2] fpgrowth (关联规则 5010 rules)...")
+        if "/app" not in sys.path:
+            sys.path.insert(0, "/app")
+        from services.docker_client import exec_capture
+        r = exec_capture(
+            "spark-master",
+            ["/opt/spark/bin/spark-submit",
+             "--master", "spark://spark-master:7077",
+             "--deploy-mode", "client",
+             "/opt/jobs/ml/fpgrowth.py"],
+            timeout=900,
+        )
+        if r.get("exit_code") == 0:
+            print("  FPGrowth rules saved to /shared/models/fpgrowth_rules.json")
+        else:
+            print(f"  [WARN] fpgrowth exit {r.get('exit_code')}, stderr={r.get('stderr','')[:200]}")
             ok = False
-            break
 
     if not ok:
         print()
-        print("[FAIL] Pipeline failed. Check: docker logs demo-backend")
+        print("[FAIL] Training failed. Check: docker logs demo-backend")
         sys.exit(1)
 
     print()
     print("=" * 60)
-    print(" Pipeline complete (data only, no training)!")
+    print(" Training complete!")
     print("=" * 60)
-    print(" MySQL: 4 tables populated (210,010 rows)")
-    print(" HDFS:  /scenic/cleaned/ has 4 parquet dirs")
-    print(" Hive:  8 tables in scenic_ext (4 ext_t_* + 4 v_*)")
-    print(" Models: /shared/models/sklearn/ preserved (run start-train.bat to retrain)")
-    print(" FPGrowth: preserved from previous training (run start-train.bat to re-run)")
+    print(" Models: 9 .pkl in /shared/models/sklearn/")
+    print(" FPGrowth: 5010 rules in /shared/models/fpgrowth_rules.json")
     print()
-    print("Open http://localhost:8080/analysis.html to see the dashboard.")
-    print("To retrain models: scripts\\start-train.bat")
+    print("Open http://localhost:8080/predict.html to test predictions.")
 
 
 if __name__ == "__main__":
