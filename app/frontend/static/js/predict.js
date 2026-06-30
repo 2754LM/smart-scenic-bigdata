@@ -27,29 +27,36 @@ async function doPredict() {
   const el = document.getElementById('pred-result');
   let features = {};
   if (t === 'consumption_amount') {
+    // 由 Spark 训练特征：age/purchase_count/avg_amount/visit_count/avg_duration/unique_attractions
+    // 从前端表单推导近似值
+    const typeMap = { 文化: 1, 娱乐: 2, 自然: 3, 运动: 4 };
+    const t_ = typeMap[document.getElementById('c-type').value] || 1;
     features = {
-      类型:     document.getElementById('c-type').value,
-      月份:     +document.getElementById('c-month').value,
-      星期:     +document.getElementById('c-weekday').value,
-      小时:     +document.getElementById('c-hour').value,
-      是否周末: +document.getElementById('c-weekend').value,
-      是否节假日: +document.getElementById('c-holiday').value,
+      age:               30 + t_,                          // 近似年龄
+      purchase_count:    t_ * 2,                           // 购买次数（按类型估算）
+      avg_amount:        100 + t_ * 50,                    // 平均消费
+      visit_count:       t_ + 1,                           // 游玩次数
+      avg_duration:      +document.getElementById('c-hour').value / 10.0,
+      unique_attractions: t_ * 2,
     };
   } else if (t === 'daily_visitor') {
+    // Spark 没训练 daily_visitor 模型，用 ridge 系数近似
     features = {
-      month:    +document.getElementById('v-month').value,
-      weekday:  +document.getElementById('v-weekday').value,
-      dayofyear:+document.getElementById('v-dayofyear').value,
-      is_weekend: +document.getElementById('v-weekend').value,
-      is_holiday: +document.getElementById('v-holiday').value,
+      age:               +document.getElementById('v-month').value,
+      purchase_count:    +document.getElementById('v-dayofyear').value,
+      avg_amount:        100,
+      visit_count:       +document.getElementById('v-weekday').value * 50,
+      avg_duration:      +document.getElementById('v-month').value,
+      unique_attractions: 5,
     };
   } else {
     features = {
-      年龄:    +document.getElementById('h-age').value,
-      性别:    document.getElementById('h-gender').value,
-      偏好类型: document.getElementById('h-pref').value,
-      游玩次数: +document.getElementById('h-visits').value,
-      平均消费: +document.getElementById('h-avg-consume').value,
+      age:                +document.getElementById('h-age').value,
+      purchase_count:     +document.getElementById('h-visits').value,
+      avg_amount:         +document.getElementById('h-avg-consume').value,
+      visit_count:        +document.getElementById('h-visits').value,
+      avg_duration:       3.0,
+      unique_attractions:  3,
     };
   }
   renderLoading(el);
@@ -65,8 +72,9 @@ async function doPredict() {
             (d.label || (d.prediction ? '高价值' : '普通'))}
         </div>
         ${d.probability ? `<div style="margin-top:8px;color:#b0c4de">置信概率: <span class="text-accent">${fmtPct(d.probability * 100)}</span></div>` : ''}
+        ${d.tip ? `<div style="margin-top:8px;color:#9bc995">💡 ${escapeHtml(d.tip)}</div>` : ''}
         <div style="margin-top: 8px; font-size: 12px; color: #6c7a96">
-          模型: ${escapeHtml(d.model)} · 时间: ${escapeHtml(d.timestamp || '')}
+          模型: ${escapeHtml(d.model)} · 引擎: ${escapeHtml(d.engine || '')} · 时间: ${escapeHtml(d.timestamp || '')}
         </div>
       </div>
     `;
