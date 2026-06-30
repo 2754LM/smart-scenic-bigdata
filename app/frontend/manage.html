@@ -105,9 +105,9 @@
     </div>
   </div>
 
-  <script src="static/js/common.js?v=2"></script>
-  <script src="static/js/api.js?v=2"></script>
-  <script src="static/js/manage.js?v=2"></script>
+  <script src="static/js/common.js?v=10"></script>
+  <script src="static/js/api.js?v=10"></script>
+  <script src="static/js/manage.js?v=10"></script>
     <!-- Kafka 实时流 -->
     <div id="tab-kafka" class="tab-content" style="display:none">
       <div class="card">
@@ -145,6 +145,22 @@
             <button class="btn btn-primary" id="kafka-publish-event">发布事件</button>
           </div>
 
+          <h3 style="margin-top:24px;color:#00d4ff">⚡ 批量任务触发器 (生成 N 个事件 → Kafka → Consumer → HBase)</h3>
+          <div class="form-row">
+            <label>任务类型:</label>
+            <select id="kafka-task-type">
+              <option value="random_events">随机事件 (混合 enter/exit/review)</option>
+              <option value="consume_burst">消费激增 (enter + consume + exit 套餐)</option>
+              <option value="review_flood">评论刷屏 (大量 review)</option>
+            </select>
+            <label>事件数:</label>
+            <input type="number" id="kafka-task-count" min="1" max="500" value="50" style="width:80px" />
+            <label>景点 ID:</label>
+            <input type="number" id="kafka-task-aid" min="1" max="10" placeholder="随机" style="width:80px" />
+            <button class="btn btn-primary" id="kafka-task-trigger">⚡ 触发任务</button>
+          </div>
+          <div id="kafka-task-result" style="margin-top:8px"></div>
+
           <h3>Kafka 引擎状态</h3>
           <pre id="kafka-status" style="background:#f5f5f5; padding:10px; border-radius:4px; overflow:auto; max-height:200px">加载中...</pre>
 
@@ -152,107 +168,12 @@
           <div class="form-row">
             <button class="btn" id="kafka-refresh">刷新 HBase 数据</button>
           </div>
-          <div id="kafka-hbase-data"></div>
-        </div>
-      </div>
-    </div>
+           <div id="kafka-hbase-data"></div>
+         </div>
+       </div>
+     </div>
 
-<script>
-// === Kafka 实时流 ===
 
-document.addEventListener('DOMContentLoaded', () => {
-  // tab 切换
-  document.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-      document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('btn-primary'));
-      btn.classList.add('btn-primary');
-      const tab = btn.getAttribute('data-tab');
-      const target = document.getElementById('tab-' + tab);
-      if (target) target.style.display = '';
-    });
-  });
-
-  // 发布评论
-  const pubReviewBtn = document.getElementById('kafka-publish-review');
-  if (pubReviewBtn) {
-    pubReviewBtn.addEventListener('click', async () => {
-      const body = {
-        visitor_id:   document.getElementById('kafka-vid').value,
-        attraction_id: document.getElementById('kafka-aid').value,
-        rating:       parseInt(document.getElementById('kafka-rating').value),
-        comment:      document.getElementById('kafka-comment').value,
-      };
-      try {
-        const r = await fetch('/api/realtime/publish/review', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body),
-        });
-        const data = await r.json();
-        alert('发布: ' + JSON.stringify(data, null, 2));
-        refreshKafkaStatus();
-      } catch (e) { alert('发布失败: ' + e); }
-    });
-  }
-
-  // 发布事件
-  const pubEventBtn = document.getElementById('kafka-publish-event');
-  if (pubEventBtn) {
-    pubEventBtn.addEventListener('click', async () => {
-      const body = {
-        visitor_id:   document.getElementById('kafka-ev-vid').value,
-        attraction_id: document.getElementById('kafka-ev-aid').value,
-        event_type:   document.getElementById('kafka-ev-type').value,
-      };
-      try {
-        const r = await fetch('/api/realtime/publish/event', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body),
-        });
-        const data = await r.json();
-        alert('发布: ' + JSON.stringify(data, null, 2));
-        refreshKafkaStatus();
-      } catch (e) { alert('发布失败: ' + e); }
-    });
-  }
-
-  // 刷新状态
-  const refreshBtn = document.getElementById('kafka-refresh');
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', refreshAll);
-  }
-
-  refreshAll();
-});
-
-async function refreshAll() {
-  await refreshKafkaStatus();
-  try {
-    const r = await fetch('/api/realtime/visit-recent?limit=15');
-    const data = await r.json();
-    const div = document.getElementById('kafka-hbase-data');
-    if (div && data.data && data.data.length) {
-      let html = '<table style="width:100%; border-collapse:collapse; margin-top:10px"><tr><th>row_key</th><th>visitor</th><th>attraction</th><th>action</th><th>ts</th></tr>';
-      data.data.forEach(d => {
-        html += '<tr><td>' + (d.row_key || '') + '</td><td>' + (d.visitor_id || '') + '</td><td>' + (d.scenic_id || d.attraction_id || '') + '</td><td>' + (d.action || d.event_type || '') + '</td><td>' + (d.ts || '') + '</td></tr>';
-      });
-      html += '</table>';
-      div.innerHTML = html;
-    } else if (div) {
-      div.innerHTML = '<p style="color:gray">暂无数据</p>';
-    }
-  } catch (e) { console.error(e); }
-}
-
-async function refreshKafkaStatus() {
-  try {
-    const r = await fetch('/api/realtime/kafka/status');
-    const data = await r.json();
-    const el = document.getElementById('kafka-status');
-    if (el) el.textContent = JSON.stringify(data, null, 2);
-  } catch (e) { console.error(e); }
-}
-</script>
 
     <!-- 系统管理 -->
     <div id="tab-system" class="tab-content" style="display:none">
@@ -304,7 +225,7 @@ async function refreshKafkaStatus() {
       </div>
     </div>
 
-  <script src="static/js/admin.js?v=2"></script>
+  <script src="static/js/admin.js?v=10"></script>
 </body>
 </html>
 

@@ -21,6 +21,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('c-search').addEventListener('click', () => { consumptionPage = 1; loadConsumption(); });
   document.getElementById('vr-search').addEventListener('click', () => { visitsPage = 1; loadVisits(); });
   document.getElementById('hb-search').addEventListener('click', loadHBase);
+
+  // Kafka 实时流
+  const pr = document.getElementById('kafka-publish-review');
+  if (pr) pr.addEventListener('click', publishReview);
+  const pe = document.getElementById('kafka-publish-event');
+  if (pe) pe.addEventListener('click', publishEvent);
+  const pt = document.getElementById('kafka-task-trigger');
+  if (pt) pt.addEventListener('click', triggerKafkaTask);
+  const rb = document.getElementById('kafka-refresh');
+  if (rb) rb.addEventListener('click', refreshKafkaAll);
+
+  refreshKafkaAll();
 });
 
 function switchTab(tab) {
@@ -36,6 +48,8 @@ function switchTab(tab) {
   if (tab === 'visitors')    loadVisitors();
   if (tab === 'consumption') loadConsumption();
   if (tab === 'visits')      loadVisits();
+  if (tab === 'kafka')       refreshKafkaAll();
+  if (tab === 'hbase')       loadHBase();
 }
 
 // ---- 景点 ----
@@ -156,4 +170,93 @@ async function loadHBase() {
     if (!r.data) { renderEmpty(el, '暂无数据'); return; }
     el.innerHTML = `<pre class="text-mono" style="white-space: pre-wrap; word-break: break-all; font-size: 12px">${escapeHtml(JSON.stringify(r.data, null, 2))}</pre>`;
   } catch (e) { renderError(el, '查询失败: ' + e.message); }
+}
+
+// ---- Kafka 实时流 ----
+async function publishReview() {
+  const body = {
+    visitor_id:   document.getElementById('kafka-vid').value,
+    attraction_id: document.getElementById('kafka-aid').value,
+    rating:       parseInt(document.getElementById('kafka-rating').value),
+    comment:      document.getElementById('kafka-comment').value,
+  };
+  const div = document.getElementById('kafka-task-result');
+  renderLoading(div);
+  try {
+    const r = await API.publishReview(body);
+    div.innerHTML = `<span class="text-success">✓ 评论已发布 (via ${r.via || 'kafka'})</span> · ${escapeHtml(JSON.stringify(r.kafka_meta || {}))}`;
+    refreshKafkaAll();
+  } catch (e) {
+    renderError(div, '发布失败: ' + e.message);
+  }
+}
+
+async function publishEvent() {
+  const body = {
+    visitor_id:   document.getElementById('kafka-ev-vid').value,
+    attraction_id: document.getElementById('kafka-ev-aid').value,
+    event_type:   document.getElementById('kafka-ev-type').value,
+  };
+  const div = document.getElementById('kafka-task-result');
+  renderLoading(div);
+  try {
+    const r = await API.publishEvent(body);
+    div.innerHTML = `<span class="text-success">✓ 事件已发布 (via ${r.via || 'kafka'})</span> · ${escapeHtml(JSON.stringify(r.kafka_meta || {}))}`;
+    refreshKafkaAll();
+  } catch (e) {
+    renderError(div, '发布失败: ' + e.message);
+  }
+}
+
+async function triggerKafkaTask() {
+  const taskType = document.getElementById('kafka-task-type').value;
+  const count = parseInt(document.getElementById('kafka-task-count').value);
+  const aidRaw = document.getElementById('kafka-task-aid').value;
+  const body = {
+    task_type: taskType,
+    count: count,
+    attraction_id: aidRaw ? parseInt(aidRaw) : null,
+  };
+  const div = document.getElementById('kafka-task-result');
+  renderLoading(div);
+  try {
+    const r = await fetch(window.API_BASE + '/api/realtime/task/trigger', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+    div.innerHTML = `<span class="text-success">⚡ ${r.events_published} 个事件已发布到 Kafka</span><br>
+      <span style="color:#9ca3af;font-size:12px">${escapeHtml(r.kafka_status || '')}</span>`;
+    setTimeout(refreshKafkaAll, 2000);
+  } catch (e) {
+    renderError(div, '触发失败: ' + e.message);
+  }
+}
+
+async function refreshKafkaAll() {
+  // status
+  try {
+    const r = await API.kafkaStatus();
+    const el = document.getElementById('kafka-status');
+    if (el) el.textContent = JSON.stringify(r, null, 2);
+  } catch (e) { console.error(e); }
+  // hbase data
+  try {
+    const r = await API.visitRecent(20);
+    const div = document.getElementById('kafka-hbase-data');
+    if (div && r.data && r.data.length) {
+      let html = '<table style="width:100%; border-collapse:collapse; margin-top:10px">';
+      html += '<tr><th>row_key</th><th>visitor</th><th>attraction</th><th>action</th><th>ts</th></tr>';
+      r.data.forEach(d => {
+        html += '<tr><td>' + escapeHtml(d.row_key || '') + '</td>';
+        html += '<td>' + escapeHtml(d.visitor_id || '') + '</td>';
+        html += '<td>' + escapeHtml(d.scenic_id || d.attraction_id || '') + '</td>';
+        html += '<td>' + escapeHtml(d.action || d.event_type || '') + '</td>';
+        html += '<td>' + escapeHtml(d.ts || '') + '</td></tr>';
+      });
+      html += '</table>';
+      div.innerHTML = html;
+    } else if (div) {
+      div.innerHTML = '<p style="color:#9ca3af">暂无数据</p>';
+    }
+  } catch (e) { console.error(e); }
 }

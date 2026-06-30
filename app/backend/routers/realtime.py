@@ -126,3 +126,52 @@ def kafka_status():
         "consumer": kconsumer.get_status(),
         "now":      datetime.utcnow().isoformat() + "Z",
     }
+
+
+class TaskTriggerIn(BaseModel):
+    """模拟实时任务触发器 - 一键生成 N 条事件流"""
+    task_type: str = Field("random_events", description="任务类型: random_events|consume_burst|review_flood")
+    count: int = Field(50, ge=1, le=500, description="生成事件数量")
+    attraction_id: int | None = Field(None, description="指定景点 ID")
+
+
+@router.post("/task/trigger")
+def task_trigger(task: TaskTriggerIn):
+    """
+    触发实时任务：批量生成模拟事件 → Kafka → 后台 Consumer → HBase
+    用于演示"创造任务后链路走 Kafka"的实时数据流。
+    """
+    import random
+
+    produced = []
+    attraction_ids = list(range(1, 11))  # 10 个景点
+
+    for i in range(task.count):
+        attr_id = task.attraction_id or random.choice(attraction_ids)
+        visitor_id = str(random.randint(1, 10000))
+
+        if task.task_type == "consume_burst":
+            # 入园 + 消费 强事件
+            kproducer.publish_event(visitor_id, str(attr_id), "enter")
+            kproducer.publish_event(visitor_id, str(attr_id), "consume")
+            r = kproducer.publish_event(visitor_id, str(attr_id), "exit")
+        elif task.task_type == "review_flood":
+            r = kproducer.publish_review(visitor_id, str(attr_id), random.randint(3, 5), f"auto-review-{i}")
+        else:
+            # random_events: 混合入园/出园/评论
+            event_choice = random.choice(["enter", "exit", "review"])
+            if event_choice == "review":
+                r = kproducer.publish_review(visitor_id, str(attr_id), random.randint(1, 5), f"auto-{i}")
+            elif event_choice == "enter":
+                r = kproducer.publish_event(visitor_id, str(attr_id), "enter")
+            else:
+                r = kproducer.publish_event(visitor_id, str(attr_id), "exit")
+        produced.append(r)
+
+    return {
+        "status": "ok",
+        "task_type": task.task_type,
+        "events_published": len(produced),
+        "kafka_status": "events are being consumed in background → HBase",
+        "tip": "wait 3-5 seconds then check HBase via /api/realtime/visit-recent",
+    }

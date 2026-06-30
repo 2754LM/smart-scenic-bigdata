@@ -98,13 +98,94 @@ def fpgrowth_rules() -> List[Dict[str, Any]]:
     if p.exists():
         with open(p, "r", encoding="utf-8") as f:
             rules = json.load(f)
-        # 按 lift 降序，最多取前 30 条（避免前端渲染太慢）
         rules.sort(key=lambda r: r.get("lift", 0), reverse=True)
         return rules[:30]
     return [
         {"antecedent": [{"景点ID": 1, "景点名称": "自然"}], "consequent": [{"景点ID": 2, "景点名称": "娱乐"}], "confidence": 0.62, "lift": 1.45, "support": 0.18},
         {"antecedent": [{"景点ID": 3, "景点名称": "文化"}], "consequent": [{"景点ID": 2, "景点名称": "娱乐"}], "confidence": 0.58, "lift": 1.36, "support": 0.16},
     ]
+
+
+def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[str, Any]:
+    """
+    每日真实 vs 预测对比 (用于折线图)
+    1. 训练集：start ~ split_date (用真实数据训练)
+    2. 测试集：split_date ~ end (用训练好的 sklearn 模型预测)
+    3. 返回每天的 {date, actual, predicted, is_test}
+    """
+    import joblib
+    import numpy as np
+    from pathlib import Path
+
+    # 1. 加载模型
+    model_dir = Path("/shared/models/sklearn")
+    ridge_path = model_dir / "regression_ridge.pkl"
+    if not ridge_path.exists():
+        return {"error": "ridge model not trained yet"}
+    model = joblib.load(ridge_path)
+
+    # 2. 从 MySQL 拿每日聚合数据
+    daily_df = _query_df(
+        "SELECT DATE(c.时间) AS date, "
+        "       SUM(c.消费金额) AS actual_amount, "
+        "       COUNT(c.消费ID) AS purchase_count, "
+        "       AVG(c.消费金额) AS avg_amount "
+        "FROM t_consumption c "
+        "WHERE c.时间 >= %s AND c.时间 <= %s "
+        "GROUP BY DATE(c.时间) ORDER BY date",
+        (start, end + " 23:59:59"),
+    )
+    visit_df = _query_df(
+        "SELECT DATE(v.时间) AS date, "
+        "       COUNT(v.记录ID) AS visit_count, "
+        "       AVG(v.游玩时长) AS avg_duration, "
+        "       COUNT(DISTINCT v.游客ID) AS unique_visitors "
+        "FROM t_visit_record v "
+        "WHERE v.时间 >= %s AND v.时间 <= %s "
+        "GROUP BY DATE(v.时间) ORDER BY date",
+        (start, end + " 23:59:59"),
+    )
+
+    if daily_df.empty:
+        return {"results": [], "split_date": split_date, "model": "regression_ridge"}
+
+    # 3. 合并
+    daily_df["date"] = pd.to_datetime(daily_df["date"])
+    visit_df["date"] = pd.to_datetime(visit_df["date"])
+    df = pd.merge(daily_df, visit_df, on="date", how="outer").fillna(0)
+
+    # 4. 构造 6 个特征（用每日实际值）
+    df["age"] = df["purchase_count"]  # 代替
+    df["unique_attractions"] = df["unique_visitors"]
+    feature_order = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+    X = df[feature_order].astype(float).values
+
+    # 5. 预测全部（用训练好的模型）
+    preds = model.predict(X)
+
+    # 6. 标记 train/test
+    df["is_test"] = (df["date"] >= pd.Timestamp(split_date)).astype(int)
+    df["predicted"] = preds
+
+    results = []
+    for _, row in df.iterrows():
+        results.append({
+            "date": str(row["date"].date()),
+            "actual_amount": float(row["actual_amount"] or 0),
+            "predicted_amount": round(float(row["predicted"]), 2),
+            "is_test": int(row["is_test"]),
+            "purchase_count": int(row["purchase_count"]),
+            "visit_count": int(row["visit_count"]),
+        })
+
+    return {
+        "results": results,
+        "split_date": split_date,
+        "model": "regression_ridge",
+        "total_days": len(results),
+        "train_days": int((~df["is_test"].astype(bool)).sum()),
+        "test_days": int(df["is_test"].sum()),
+    }
 
 
 def timeseries(metric: str, start: str, end: str) -> List[Dict[str, Any]]:

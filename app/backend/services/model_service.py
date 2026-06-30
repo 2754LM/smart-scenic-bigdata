@@ -1,249 +1,230 @@
 """
-Model service: 加载 Spark 训练后的 sklearn JSON 系数做预测。
+Model service - 加载 spark-master 训练的 sklearn joblib 模型做预测。
 
-数据流：
-  PySpark train.py (spark-master) → Spark MLlib 模型
-                              → JSON 系数 (/shared/models/sklearn/*.json)
-                              → backend (demo-backend) 加载 JSON 用 sklearn 做预测
+数据流:
+  Spark train.py → /shared/models/sklearn/*.pkl (joblib)
+  → demo-backend joblib.load → predict() 毫秒级
 
-不需要 PySpark / Java 在 demo-backend 内。
+无 PySpark / Java 依赖。
 """
 from __future__ import annotations
 
-import json
 import logging
 import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import joblib
 import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import Lasso, LinearRegression, Ridge
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, r2_score
-from sklearn.preprocessing import StandardScaler
 
 import config
 
 log = logging.getLogger("smart-scenic.model")
 
-SKLEARN_DIR = Path(config.PYSPARK_MODELS_DIR) / "sklearn"
+MODELS_DIR = Path(config.PYSPARK_MODELS_DIR) / "sklearn"
 
-# 内存缓存
-_json_models: Dict[str, Dict[str, Any]] = {}
-_report: Dict[str, Any] = {}
-
-
-def _load_json(name: str) -> Optional[Dict[str, Any]]:
-    """加载 JSON 模型（缓存）"""
-    if name in _json_models:
-        return _json_models[name]
-    path = SKLEARN_DIR / f"{name}.json"
-    if not path.exists():
-        log.warning("model json not found: %s", path)
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        d = json.load(f)
-    _json_models[name] = d
-    return d
+_models: Dict[str, Any] = {}
+_metrics: Dict[str, Any] = {}
+_loaded = False
 
 
-def _standardize(values: List[float], mean: List[float], std: List[float]) -> List[float]:
-    return [(v - m) / (s if s > 1e-12 else 1e-12) for v, m, s in zip(values, mean, std)]
+def _load_models() -> None:
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
+    if not MODELS_DIR.exists():
+        log.warning("models dir not found: %s", MODELS_DIR)
+        return
+    for p in MODELS_DIR.glob("*.pkl"):
+        try:
+            _models[p.stem] = joblib.load(p)
+            log.info("loaded %s", p.stem)
+        except Exception as e:
+            log.warning("failed to load %s: %s", p.name, e)
+
+    # load metrics
+    rj = Path(config.PYSPARK_MODELS_DIR) / "_comparison_report.json"
+    if rj.exists():
+        import json
+        with open(rj, "r", encoding="utf-8") as f:
+            _metrics.update(json.load(f))
 
 
-def _all_loaded() -> bool:
-    if _report.get("loaded"):
-        return True
-    rj = SKLEARN_DIR.parent / "_comparison_report.json"
-    if not rj.exists():
-        return False
-    with open(rj, "r", encoding="utf-8") as f:
-        _report.update(json.load(f))
-    _report["loaded"] = True
-    log.info("model comparison report loaded: %d models", len(_report.get("regression", [])))
-    return True
+_load_models()
+
+
+# ----------------------------------------------------------------------
+# 特征转换：把前端字段映射到 Spark 训练时的 6 个特征
+# ----------------------------------------------------------------------
+def _features_to_spark(task: str, f: Dict[str, Any]) -> np.ndarray:
+    """
+    把前端的任意字段映射到 Spark 训练的 6 个特征:
+      [age, purchase_count, avg_amount, visit_count, avg_duration, unique_attractions]
+    返回 numpy array shape (1, 6)
+    """
+    # 直接用 6 个英文字段（前端应该已经映射好）
+    keys = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+    vals = []
+    for k in keys:
+        v = f.get(k)
+        if v is None:
+            # 兼容中文 key
+            alias = {"年龄": "age", "年龄_": "age",
+                     "购买次数": "purchase_count",
+                     "平均消费": "avg_amount",
+                     "游玩次数": "visit_count",
+                     "平均时长": "avg_duration",
+                     "景点数": "unique_attractions"}.get(k)
+            v = f.get(alias, 0) if alias else 0
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            vals.append(0.0)
+    return np.array([vals])
 
 
 def predict(task: str, features: Dict[str, Any]) -> Dict[str, Any]:
-    _all_loaded()
-    feat = _normalize_features(task, features)
+    X = _features_to_spark(task, features)
+    started = datetime.now()
 
     if task == "consumption_amount":
-        return _predict_regression("ridge", feat)  # ridge 性能最好 + 最稳
-    if task == "daily_visitor":
-        return _predict_regression("linear", feat)
-    if task == "high_value_visitor":
-        return _predict_classification(feat)
-    if task == "cluster":
-        return _predict_cluster(feat)
-    raise ValueError(f"unsupported task: {task}")
+        candidates = ("regression_ridge", "regression_linear", "regression_lasso", "regression_rf")
+    elif task == "high_value_visitor":
+        candidates = ("classification_rf",)
+    elif task == "cluster":
+        candidates = ("clustering_kmeans",)
+    elif task == "daily_visitor":
+        candidates = ("regression_ridge",)
+    else:
+        raise ValueError(f"unsupported task: {task}")
+
+    for m in candidates:
+        if m in _models:
+            try:
+                pred = _models[m].predict(X)
+                val = float(pred[0])
+                if task == "high_value_visitor":
+                    proba = float(_models[m].predict_proba(X)[0][1])
+                    return {
+                        "type": task,
+                        "prediction": round(proba, 4),
+                        "probability": round(proba, 4),
+                        "label": "high_value" if proba > 0.5 else "normal",
+                        "model": m,
+                        "engine": "sklearn",
+                        "elapsed_ms": int((datetime.now() - started).total_seconds() * 1000),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                elif task == "cluster":
+                    cluster_id = int(val)
+                    profiles = [
+                        {"label": "low_freq_low_spend", "tip": "Push coupons to drive first visit"},
+                        {"label": "high_freq_mid_spend", "tip": "Recommend popular attractions"},
+                        {"label": "mid_freq_high_spend", "tip": "Suggest VIP/year-pass"},
+                        {"label": "high_freq_high_spend", "tip": "Personal butler service"},
+                    ]
+                    return {
+                        "type": task,
+                        "cluster": cluster_id,
+                        "label": profiles[cluster_id]["label"] if cluster_id < len(profiles) else f"cluster_{cluster_id}",
+                        "tip": profiles[cluster_id]["tip"] if cluster_id < len(profiles) else "",
+                        "model": m,
+                        "engine": "sklearn",
+                        "elapsed_ms": int((datetime.now() - started).total_seconds() * 1000),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                else:
+                    return {
+                        "type": task,
+                        "prediction": round(max(val, 0.0), 2),
+                        "model": m,
+                        "engine": "sklearn",
+                        "elapsed_ms": int((datetime.now() - started).total_seconds() * 1000),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+            except Exception as e:
+                log.warning("predict failed for %s: %s", m, e)
+                continue
+    raise RuntimeError("no model available for task: " + task)
 
 
-def _normalize_features(task: str, features: Dict[str, Any]) -> Dict[str, float]:
-    """统一特征 key 到训练时的英文字段"""
-    aliases = {
-        "age": "age", "年龄": "age",
-        "purchase_count": "purchase_count",
-        "avg_amount": "avg_amount", "avg_consume": "avg_amount",
-        "visit_count": "visit_count",
-        "avg_duration": "avg_duration",
-        "unique_attractions": "unique_attractions",
-    }
-    return {aliases.get(k, k): float(v) for k, v in features.items()}
-
-
-def _predict_regression(model_name: str, features: Dict[str, float]) -> Dict[str, Any]:
-    m = _load_json(f"regression_{model_name}") or _load_json("regression_linear")
-    if m is None:
-        return _fallback_regression(features)
-    cols = m["feature_cols"]
-    mean, std = m["scaler_mean"], m["scaler_std"]
-    raw = [features.get(c, 0.0) for c in cols]
-    scaled = _standardize(raw, mean, std)
-    val = sum(c * s for c, s in zip(m["coefficients"], scaled)) + m["intercept"]
-    val = max(val, 0.0)
-    return {
-        "type": "consumption_amount",
-        "prediction": round(val, 2),
-        "model": f"pyspark_{m['model']}",
-        "engine": "pyspark-sklearn",
-        "metrics": m.get("metrics", {}),
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-def _predict_classification(features: Dict[str, float]) -> Dict[str, Any]:
-    m = _load_json("classification_rf")
-    if m is None:
-        return _fallback_classification(features)
-    cols = m["feature_cols"]
-    mean, std = m["scaler_mean"], m["scaler_std"]
-    raw = [features.get(c, 0.0) for c in cols]
-    scaled = _standardize(raw, mean, std)
-    # 简单的基于特征重要性的加权投票（近似 RF）
-    importances = m["feature_importances"]
-    weighted_score = sum(i * s for i, s in zip(importances, scaled))
-    # 归一化到 0-1 概率
-    proba = 1 / (1 + math.exp(-weighted_score / 3.0))  # sigmoid
-    proba = max(0.0, min(1.0, proba))
-    return {
-        "type": "high_value_visitor",
-        "prediction": round(proba, 4),
-        "probability": round(proba, 4),
-        "label": "高消费" if proba > 0.5 else "普通",
-        "model": f"pyspark_{m['model']}",
-        "engine": "pyspark-sklearn",
-        "metrics": m.get("metrics", {}),
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-def _predict_cluster(features: Dict[str, float]) -> Dict[str, Any]:
-    m = _load_json("clustering_kmeans")
-    if m is None:
-        return _fallback_cluster(features)
-    cols = m["feature_cols"]
-    mean, std = m["scaler_mean"], m["scaler_std"]
-    raw = [features.get(c, 0.0) for c in cols]
-    scaled = _standardize(raw, mean, std)
-    centers = m["cluster_centers"]
-    dists = [sum((a - b) ** 2 for a, b in zip(scaled, c)) ** 0.5 for c in centers]
-    cluster = int(np.argmin(dists))
-    profiles = [
-        {"label": "低频低消费游客", "tip": "推送优惠券刺激首次到访"},
-        {"label": "高频中消费游客", "tip": "推荐热门景点增加复购"},
-        {"label": "中频高消费游客", "tip": "推荐 VIP 服务与年卡"},
-        {"label": "高频高消费游客", "tip": "重点维护，提供专属管家服务"},
-    ]
-    return {
-        "type": "cluster",
-        "cluster": cluster,
-        "label": profiles[cluster]["label"] if cluster < len(profiles) else f"聚类{cluster}",
-        "tip": profiles[cluster]["tip"] if cluster < len(profiles) else "",
-        "model": f"pyspark_{m['model']}",
-        "engine": "pyspark-sklearn",
-        "metrics": m.get("metrics", {}),
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-# ----------------------------------------------------------------------
-# Fallback: 简单 sklearn 模型（如果 JSON 不存在）
-# ----------------------------------------------------------------------
-def _fallback_regression(features: Dict[str, float]) -> Dict[str, Any]:
-    val = (
-        features.get("age", 30) * 5
-        + features.get("purchase_count", 0) * 100
-        + features.get("avg_amount", 0) * 0.8
-        + features.get("visit_count", 0) * 50
-    )
-    return {
-        "type": "consumption_amount",
-        "prediction": round(max(val, 100), 2),
-        "model": "fallback_linear",
-        "engine": "sklearn_fallback",
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-def _fallback_classification(features: Dict[str, float]) -> Dict[str, Any]:
-    score = features.get("total_amount", 0) / 1000
-    proba = max(0.0, min(1.0, score))
-    return {
-        "type": "high_value_visitor",
-        "prediction": round(proba, 4),
-        "probability": round(proba, 4),
-        "label": "高消费" if proba > 0.5 else "普通",
-        "model": "fallback_threshold",
-        "engine": "sklearn_fallback",
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-def _fallback_cluster(features: Dict[str, float]) -> Dict[str, Any]:
-    return {
-        "type": "cluster",
-        "cluster": 0,
-        "label": "未识别",
-        "model": "fallback",
-        "engine": "sklearn_fallback",
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-# ----------------------------------------------------------------------
-# Reports（来自 train.py 导出的 JSON）
-# ----------------------------------------------------------------------
 def regression_report() -> List[Dict[str, Any]]:
-    _all_loaded()
-    return _report.get("regression", [])
+    return _metrics.get("regression", [])
 
 
 def classification_report() -> List[Dict[str, Any]]:
-    _all_loaded()
-    return _report.get("classification", [])
+    return _metrics.get("classification", [])
 
 
 def clustering_report() -> List[Dict[str, Any]]:
-    _all_loaded()
-    return _report.get("clustering", [])
+    """计算每个聚类中心的统计信息（人数/平均年龄/平均消费/平均游玩次数/平均时长）。
+    流程: 从 MySQL 取游客聚合数据 → sklearn KMeans 预测 → 分组统计
+    """
+    if "clustering_kmeans" not in _models:
+        return []
+    from services.mysql_service import query
+    import numpy as np
+
+    # 游客聚合
+    rows = query(
+        "SELECT v.游客ID AS visitor_id, v.年龄 AS age, "
+        "  COALESCE(SUM(c.消费金额), 0) AS total_consume, "
+        "  COALESCE(COUNT(c.消费ID), 0) AS consume_count, "
+        "  COALESCE(COUNT(vr.记录ID), 0) AS visit_count, "
+        "  COALESCE(SUM(vr.游玩时长), 0) AS total_duration "
+        "FROM t_visitor v "
+        "LEFT JOIN t_consumption c ON v.游客ID = c.游客ID "
+        "LEFT JOIN t_visit_record vr ON v.游客ID = vr.游客ID "
+        "GROUP BY v.游客ID, v.年龄 LIMIT 10000"
+    )
+    if not rows:
+        return []
+
+    feature_order = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+    # 构造特征矩阵（用每日平均值近似）
+    X = np.zeros((len(rows), 6))
+    for i, r in enumerate(rows):
+        X[i, 0] = r.get("age") or 30
+        X[i, 1] = r.get("consume_count") or 0
+        X[i, 2] = (r.get("total_consume") / max(r.get("consume_count") or 1, 1))
+        X[i, 3] = r.get("visit_count") or 0
+        X[i, 4] = (r.get("total_duration") / max(r.get("visit_count") or 1, 1))
+        X[i, 5] = 3  # 近似
+
+    km = _models["clustering_kmeans"]
+    labels = km.predict(X)
+
+    stats = []
+    for c in range(4):
+        mask = (labels == c)
+        if mask.sum() == 0:
+            continue
+        n = int(mask.sum())
+        stats.append({
+            "cluster": c,
+            "n": n,
+            "avg_age": round(float(X[mask, 0].mean()), 1),
+            "avg_total_consume": round(float(X[mask, 2].mean() * X[mask, 1].mean()), 0),  # avg_amount * purchase_count
+            "avg_per_consume": round(float(X[mask, 2].mean()), 1),
+            "avg_visit_count": round(float(X[mask, 3].mean()), 1),
+            "avg_duration_h": round(float(X[mask, 4].mean()), 2),
+        })
+    return stats
 
 
 def compare_models() -> Dict[str, Any]:
-    _all_loaded()
     return {
-        "regression": _report.get("regression", []),
-        "classification": _report.get("classification", []),
-        "clustering": _report.get("clustering", []),
+        "regression": _metrics.get("regression", []),
+        "classification": _metrics.get("classification", []),
+        "clustering": _metrics.get("clustering", []),
     }
 
 
 def model_status() -> Dict[str, Any]:
-    """返回模型状态（前端诊断用）"""
     return {
-        "sklearn_json_dir": str(SKLEARN_DIR),
-        "models_loaded": list(_json_models.keys()),
-        "report_loaded": _report.get("loaded", False),
+        "models_dir": str(MODELS_DIR),
+        "models_loaded": sorted(_models.keys()),
+        "metrics_loaded": bool(_metrics),
     }

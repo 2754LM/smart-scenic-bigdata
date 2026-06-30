@@ -1,52 +1,60 @@
 """
-PySpark MLlib 训练 + 导出 sklearn 兼容系数 - 智能景区
-=====================================================
+PySpark MLlib 训练 + sklearn joblib 模型输出 - 智能景区
+====================================================
+训练在 Spark，推理用 sklearn（毫秒级、无 PySpark 依赖）。
 
-作业要求：
-  - 回归：Linear/Lasso/Ridge/随机森林
-  - 聚类：KMeans
-  - 分类：DT/RF
-  - 关联规则：FPGrowth（独立脚本 fpgrowth.py）
+训练特征（6个）:
+  age, purchase_count, avg_amount, visit_count, avg_duration, unique_attractions
+
+数据流:
+  1. spark-submit train.py 训练并保存
+  2. /shared/models/sklearn/ 中产出 .pkl (joblib 模型)
+  3. demo-backend joblib.load() 加载预测
 
 执行（spark-master 内）：
   spark-submit --master spark://spark-master:7077 /opt/jobs/ml/train.py
-
-输出：
-  HDFS  /scenic/models/                  - 完整 Spark MLlib 模型（生态保留）
-  Local /shared/models/                  - 复制一份给后端
-  Local /shared/models/sklearn/          - **JSON 系数给后端直接预测**（无需 PySpark）
 """
 import json
 import os
 import shutil
+import sys
+
+# 在 nohup 环境下补 pyspark path
+for _p in ("/usr/local/lib/python3.8/dist-packages", "/usr/lib/python3/dist-packages"):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# sklearn / joblib（用于把 Spark 训练结果转换为 sklearn 模型 + dump）
+import joblib
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.cluster import KMeans
+from sklearn.pipeline import Pipeline as SKPipeline
+from sklearn.preprocessing import StandardScaler
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.ml import Pipeline, PipelineModel
-from pyspark.ml.feature import VectorAssembler, StandardScaler
-from pyspark.ml.regression import LinearRegression, LinearRegressionModel, RandomForestRegressor
-from pyspark.ml.clustering import KMeans, KMeansModel
-from pyspark.ml.classification import RandomForestClassifier, RandomForestClassificationModel, DecisionTreeClassifier, DecisionTreeClassificationModel
+from pyspark.ml.feature import VectorAssembler, StandardScaler as SparkScaler
+from pyspark.ml.regression import LinearRegression as SparkLR, LinearRegressionModel, RandomForestRegressor as SparkRFR
+from pyspark.ml.clustering import KMeans as SparkKM, KMeansModel
+from pyspark.ml.classification import RandomForestClassifier as SparkRFC, RandomForestClassificationModel, DecisionTreeClassifier as SparkDTC
 from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator, MulticlassClassificationEvaluator
 
-spark = SparkSession.builder \
-    .appName("SmartScenic-ML-Train") \
-    .getOrCreate()
+spark = SparkSession.builder.appName("SmartScenic-ML-Train").getOrCreate()
 spark.sparkContext.setLogLevel("WARN")
 
 HDFS_CLEAN = "hdfs://hadoop-namenode:9000/scenic/cleaned"
 HDFS_MODEL = "hdfs://hadoop-namenode:9000/scenic/models"
 SHARED_MODEL = "/shared/models"
-SKLEARN_EXPORT_DIR = "/shared/models/sklearn"
+SKLEARN_OUT = "/shared/models/sklearn"   # demo-backend 用 joblib.load 这里
 
-FEATURE_COLS = ["age", "purchase_count", "avg_amount", "visit_count",
-                "avg_duration", "unique_attractions"]
+FEATURE_COLS = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
 
 
-# ============== 1. 准备训练数据 ==============
-print("[1/6] prepare training data ...", flush=True)
-
-df_visitor = spark.read.parquet(f"{HDFS_CLEAN}/t_visitor") \
-    .select("visitor_id", "age")
+# ============== 1. 数据 ==============
+print("[1/5] prepare training data ...", flush=True)
+df_visitor = spark.read.parquet(f"{HDFS_CLEAN}/t_visitor").select("visitor_id", "age")
 df_cons = spark.read.parquet(f"{HDFS_CLEAN}/t_consumption") \
     .groupBy("visitor_id") \
     .agg(F.sum("amount").alias("total_amount"),
@@ -65,9 +73,11 @@ df_features = df_features.withColumn(
     "high_value_label", F.when(F.col("total_amount") > 500, 1.0).otherwise(0.0))
 print(f"    total rows: {df_features.count()}", flush=True)
 
+
+# ============== 2. 训练 Pipeline（用于预测时的转换） ==============
 assembler = VectorAssembler(inputCols=FEATURE_COLS, outputCol="raw_features")
-scaler = StandardScaler(inputCol="raw_features", outputCol="features", withMean=True, withStd=True)
-pipeline_prep = Pipeline(stages=[assembler, scaler])
+spark_scaler = SparkScaler(inputCol="raw_features", outputCol="features", withMean=True, withStd=True)
+pipeline_prep = Pipeline(stages=[assembler, spark_scaler])
 prep_model = pipeline_prep.fit(df_features)
 df_prep = prep_model.transform(df_features)
 
@@ -75,162 +85,126 @@ train_data, test_data = df_prep.randomSplit([0.8, 0.2], seed=42)
 print(f"    train: {train_data.count()}, test: {test_data.count()}", flush=True)
 
 
-# ============== 辅助函数 ==============
-def save_spark_model(trained_model, name: str):
-    hdfs_path = f"{HDFS_MODEL}/{name}"
-    trained_model.write().overwrite().save(hdfs_path)
-
-    sc = spark.sparkContext
-    hadoop = sc._jvm.org.apache.hadoop.fs.FileSystem.get(sc._jsc.hadoopConfiguration())
-    FileUtil = sc._jvm.org.apache.hadoop.fs.FileUtil
-    src_path = sc._jvm.org.apache.hadoop.fs.Path(hdfs_path)
-    dst_path = sc._jvm.org.apache.hadoop.fs.Path(f"{SHARED_MODEL}/{name}")
-
-    if os.path.exists(f"{SHARED_MODEL}/{name}"):
-        shutil.rmtree(f"{SHARED_MODEL}/{name}")
-    FileUtil.copy(hadoop, src_path, hadoop, dst_path, False, sc._jsc.hadoopConfiguration())
+# ============== 3. 提取 SparkScaler 的 mean / std 用于 sklearn ==============
+spark_scaler_model = prep_model.stages[1]
+scaler_mean = spark_scaler_model.mean.toArray().tolist()
+scaler_std = spark_scaler_model.std.toArray().tolist()
 
 
-def save_json(obj: dict, name: str):
-    """保存 JSON 到 SKLEARN_EXPORT_DIR"""
-    os.makedirs(SKLEARN_EXPORT_DIR, exist_ok=True)
-    path = f"{SKLEARN_EXPORT_DIR}/{name}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    print(f"    sklearn JSON -> {path}", flush=True)
+def make_sk_pipeline(model) -> SKPipeline:
+    """包成 sklearn Pipeline: StandardScaler -> model"""
+    sc = StandardScaler()
+    sc.mean_ = np.array(scaler_mean)
+    sc.scale_ = np.array(scaler_std)
+    sc.var_ = sc.scale_ ** 2
+    sc.n_features_in_ = len(FEATURE_COLS)
+    return SKPipeline([("scaler", sc), ("model", model)])
 
 
-# ============== 2. 回归模型 + 导出系数 ==============
-print("\n[2/6] regression training ...", flush=True)
+# ============== 4. 训练并保存 sklearn 模型 ==============
+os.makedirs(SKLEARN_OUT, exist_ok=True)
+report = {"regression": [], "clustering": [], "classification": []}
 
-# 保存 prep_model 的 scaler 参数（后端做同样标准化）
-scaler_model = prep_model.stages[1]
-scaler_mean = scaler_model.mean.toArray().tolist()
-scaler_std = scaler_model.std.toArray().tolist()
 
-regression_results = []
-for name, model in [
-    ("linear",  LinearRegression(featuresCol="features", labelCol="total_amount", regParam=0.0, elasticNetParam=0.0)),
-    ("lasso",   LinearRegression(featuresCol="features", labelCol="total_amount", regParam=0.1, elasticNetParam=1.0)),
-    ("ridge",   LinearRegression(featuresCol="features", labelCol="total_amount", regParam=0.1, elasticNetParam=0.0)),
-    ("rf",      RandomForestRegressor(featuresCol="features", labelCol="total_amount", numTrees=20)),
+# --- 回归 ---
+print("\n[2/5] regression ...", flush=True)
+for name, spark_model in [
+    ("linear", SparkLR(featuresCol="features", labelCol="total_amount", regParam=0.0, elasticNetParam=0.0)),
+    ("lasso",  SparkLR(featuresCol="features", labelCol="total_amount", regParam=0.1, elasticNetParam=1.0)),
+    ("ridge",  SparkLR(featuresCol="features", labelCol="total_amount", regParam=0.1, elasticNetParam=0.0)),
+    ("rf",     SparkRFR(featuresCol="features", labelCol="total_amount", numTrees=20)),
 ]:
-    trained = model.fit(train_data)
+    trained = spark_model.fit(train_data)
     pred = trained.transform(test_data)
     rmse = RegressionEvaluator(labelCol="total_amount", metricName="rmse").evaluate(pred)
     r2 = RegressionEvaluator(labelCol="total_amount", metricName="r2").evaluate(pred)
     print(f"    {name:8s}  RMSE={rmse:8.2f}  R²={r2:6.4f}", flush=True)
 
-    full_pipeline = Pipeline(stages=[assembler, scaler, trained])
-    save_spark_model(full_pipeline, f"regression_{name}")
-
-    # 导出 sklearn 系数（仅 Linear 类）
     if isinstance(trained, LinearRegressionModel):
-        coefs = trained.coefficients.toArray().tolist()
+        # 重建 sklearn LinearRegression / Lasso / Ridge（用 Spark 训练出的系数）
+        coeffs = trained.coefficients.toArray().tolist()
         intercept = float(trained.intercept)
-        save_json({
-            "task": "consumption_amount",
-            "model": name,
-            "type": "linear",
-            "feature_cols": FEATURE_COLS,
-            "coefficients": coefs,
-            "intercept": intercept,
-            "scaler_mean": scaler_mean,
-            "scaler_std": scaler_std,
-            "metrics": {"rmse": float(rmse), "r2": float(r2)},
-        }, f"regression_{name}")
+        if name == "linear":
+            sk_model = LinearRegression()
+        elif name == "lasso":
+            sk_model = Lasso(alpha=0.1, max_iter=5000)
+        elif name == "ridge":
+            sk_model = Ridge(alpha=0.1)
+        sk_model.coef_ = np.array(coeffs)
+        sk_model.intercept_ = intercept
+        sk_model.n_features_in_ = len(coeffs)
+    elif isinstance(trained, RandomForestRegressor):
+        # 重建 sklearn RandomForest（用相同超参重新拟合）
+        from sklearn.ensemble import RandomForestRegressor as SKRF
+        # 直接拿 spark 训练的树结构有些麻烦，简单做法：用 sklearn 在相同数据上重新拟合
+        # 取训练/测试的真实值
+        train_pdf = train_data.select(FEATURE_COLS + ["total_amount"]).toPandas()
+        test_pdf = test_data.select(FEATURE_COLS + ["total_amount"]).toPandas()
+        X_train = train_pdf[FEATURE_COLS].values
+        y_train = train_pdf["total_amount"].values
+        X_test = test_pdf[FEATURE_COLS].values
+        y_test = test_pdf["total_amount"].values
+        sk_model = SKRF(n_estimators=20, random_state=42).fit(X_train, y_train)
 
-    regression_results.append({"model": name, "rmse": float(rmse), "r2": float(r2)})
+    pipe = make_sk_pipeline(sk_model)
+    joblib.dump(pipe, f"{SKLEARN_OUT}/regression_{name}.pkl")
+    print(f"    saved {SKLEARN_OUT}/regression_{name}.pkl", flush=True)
+
+    report["regression"].append({"model": name, "rmse": float(rmse), "r2": float(r2)})
 
 
-# ============== 3. 聚类模型 ==============
-print("\n[3/6] KMeans clustering ...", flush=True)
-kmeans = KMeans(featuresCol="features", predictionCol="cluster", k=4, seed=42)
-kmeans_model = kmeans.fit(df_prep)
-kmeans_pred = kmeans_model.transform(df_prep)
-silhouette = ClusteringEvaluator(predictionCol="cluster", metricName="silhouette").evaluate(kmeans_pred)
-print(f"    silhouette score: {silhouette:6.4f}", flush=True)
+# --- 聚类 ---
+print("\n[3/5] KMeans ...", flush=True)
+kmeans = SparkKM(featuresCol="features", predictionCol="cluster", k=4, seed=42)
+km_trained = kmeans.fit(df_prep)
+km_pred = km_trained.transform(df_prep)
+silhouette = ClusteringEvaluator(predictionCol="cluster", metricName="silhouette").evaluate(km_pred)
+print(f"    silhouette: {silhouette:6.4f}", flush=True)
 
-full_km_pipeline = Pipeline(stages=[assembler, scaler, kmeans_model])
-save_spark_model(full_km_pipeline, "clustering_kmeans")
+# sklearn KMeans 在标准化后的特征上重新训练
+train_pdf = train_data.select(FEATURE_COLS).toPandas()
+X = (train_pdf[FEATURE_COLS].values - np.array(scaler_mean)) / np.array(scaler_std)
+sk_km = KMeans(n_clusters=4, random_state=42, n_init=10).fit(X)
+joblib.dump(sk_km, f"{SKLEARN_OUT}/clustering_kmeans.pkl")
+print(f"    saved {SKLEARN_OUT}/clustering_kmeans.pkl", flush=True)
 
-# 导出 KMeans 中心点
-centers = [c.tolist() for c in kmeans_model.clusterCenters()]
-save_json({
-    "task": "cluster",
-    "model": "kmeans",
-    "type": "kmeans",
-    "feature_cols": FEATURE_COLS,
-    "n_clusters": 4,
-    "cluster_centers": centers,
-    "scaler_mean": scaler_mean,
-    "scaler_std": scaler_std,
-    "metrics": {"silhouette": float(silhouette)},
-}, "clustering_kmeans")
-
-for i, c in enumerate(kmeans_model.clusterCenters()):
+report["clustering"].append({"model": "kmeans", "silhouette": float(silhouette)})
+for i, c in enumerate(km_trained.clusterCenters()):
     print(f"      cluster {i}: {[round(float(x),2) for x in c]}", flush=True)
 
 
-# ============== 4. 分类模型 ==============
-print("\n[4/6] classification training ...", flush=True)
-
+# --- 分类 ---
+print("\n[4/5] classification ...", flush=True)
 df_clf = df_prep.filter(F.col("high_value_label").isin([0.0, 1.0]))
 train_c, test_c = df_clf.randomSplit([0.8, 0.2], seed=42)
-
-classification_results = []
-for name, model in [
-    ("dt", DecisionTreeClassifier(featuresCol="features", labelCol="high_value_label", maxDepth=10)),
-    ("rf", RandomForestClassifier(featuresCol="features", labelCol="high_value_label", numTrees=20, maxDepth=10)),
+for name, spark_model in [
+    ("rf", SparkRFC(featuresCol="features", labelCol="high_value_label", numTrees=20, maxDepth=10)),
 ]:
-    trained = model.fit(train_c)
+    trained = spark_model.fit(train_c)
     pred = trained.transform(test_c)
     acc = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="accuracy").evaluate(pred)
     f1 = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="f1").evaluate(pred)
-    print(f"    {name:4s}  accuracy={acc:6.4f}  f1={f1:6.4f}", flush=True)
+    print(f"    {name:4s}  acc={acc:6.4f}  f1={f1:6.4f}", flush=True)
 
-    full_clf_pipeline = Pipeline(stages=[assembler, scaler, trained])
-    save_spark_model(full_clf_pipeline, f"classification_{name}")
+    # sklearn 重建（同样用真实数据）
+    train_c_pdf = train_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
+    test_c_pdf = test_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
+    Xc_train = train_c_pdf[FEATURE_COLS].values
+    yc_train = train_c_pdf["high_value_label"].astype(int).values
+    sk_clf = RandomForestClassifier(n_estimators=20, max_depth=10, random_state=42).fit(Xc_train, yc_train)
+    joblib.dump(sk_clf, f"{SKLEARN_OUT}/classification_{name}.pkl")
+    print(f"    saved {SKLEARN_OUT}/classification_{name}.pkl", flush=True)
 
-    # 导出 RF 的特征重要性（DT 太复杂）
-    if isinstance(trained, RandomForestClassificationModel):
-        importances = trained.featureImportances.toArray().tolist()
-        save_json({
-            "task": "high_value_visitor",
-            "model": name,
-            "type": "random_forest",
-            "feature_cols": FEATURE_COLS,
-            "feature_importances": importances,
-            "scaler_mean": scaler_mean,
-            "scaler_std": scaler_std,
-            "metrics": {"accuracy": float(acc), "f1": float(f1)},
-            "note": "sklearn RandomForest with same params (n_estimators=20, max_depth=10) approximates this",
-        }, f"classification_{name}")
-
-    classification_results.append({"model": name, "accuracy": float(acc), "f1": float(f1)})
+    report["classification"].append({"model": name, "accuracy": float(acc), "f1": float(f1)})
 
 
 # ============== 5. 对比报告 ==============
-print("\n[5/6] save comparison report ...", flush=True)
-report = {
-    "regression":   regression_results,
-    "clustering":   [{"model": "kmeans", "silhouette": float(silhouette)}],
-    "classification": classification_results,
-    "feature_cols": FEATURE_COLS,
-    "training_data_size": int(df_features.count()),
-}
-with open("/shared/models/_comparison_report.json", "w", encoding="utf-8") as f:
+print("\n[5/5] save comparison report ...", flush=True)
+with open(f"{SHARED_MODEL}/_comparison_report.json", "w", encoding="utf-8") as f:
     json.dump(report, f, ensure_ascii=False, indent=2)
-print(f"    -> /shared/models/_comparison_report.json", flush=True)
 
-
-# ============== 6. 完成 ==============
-print("\n=== PySpark MLlib Training Done ===", flush=True)
-print(f"HDFS models     : {HDFS_MODEL}", flush=True)
-print(f"Shared models   : {SHARED_MODEL}", flush=True)
-print(f"Sklearn JSON    : {SKLEARN_EXPORT_DIR}", flush=True)
-print("\nBackend 用法:", flush=True)
-print("  - 直接读 JSON 系数做预测（线性模型，毫秒级）", flush=True)
-print("  - 用 sklearn.ensemble 重建 RF（特征重要性已知）", flush=True)
-
+# FPGrowth 是另一个脚本，这里只触发即可
+print("\n=== Training Done ===", flush=True)
+print(f"Models dir: {SKLEARN_OUT}", flush=True)
+print(f"Files: {sorted(os.listdir(SKLEARN_OUT))}", flush=True)
 spark.stop()

@@ -6,6 +6,7 @@
    ============================================================ */
 
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE) || 'http://localhost:8000';
+window.API_BASE = API_BASE;
 
 async function api(path, options = {}) {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
@@ -31,37 +32,32 @@ async function api(path, options = {}) {
 }
 
 const API = {
-  // overview
+  // 概览
   kpi:                ()      => api('/api/overview/kpi'),
-  timeseries:         (m='consumption', s='2023-01-01', e='2023-12-31') =>
+  timeseries:         (m='visitors', s='2023-01-01', e='2023-12-31') =>
                           api(`/api/overview/timeseries?metric=${m}&start=${s}&end=${e}`),
   attractionRank:     ()      => api('/api/overview/attraction-rank'),
   health:             ()      => api('/api/overview/health'),
 
-  // attractions
+  // 景点 / 游客 / 消费 / 游玩
   attractions:        ()      => api('/api/attractions'),
   attraction:         (id)    => api(`/api/attractions/${id}`),
   attractionSummary:  (id)    => api(`/api/attractions/${id}/summary`),
-
-  // visitors
-  visitors:           (params={}) => {
-    const q = new URLSearchParams(params).toString();
-    return api(`/api/visitors${q ? '?' + q : ''}`);
+  visitors:           (q={})  => {
+    const qs = new URLSearchParams(q).toString();
+    return api(`/api/visitors${qs ? '?' + qs : ''}`);
   },
-  visitor:            (id)    => api(`/api/visitors/${id}`),
   visitorAggregate:   (id)    => api(`/api/visitors/${id}/aggregate`),
-
-  // consumption
-  consumption:        (params={}) => {
-    const q = new URLSearchParams(params).toString();
-    return api(`/api/consumption${q ? '?' + q : ''}`);
+  consumption:        (q={})  => {
+    const qs = new URLSearchParams(q).toString();
+    return api(`/api/consumption${qs ? '?' + qs : ''}`);
   },
-  visits:             (params={}) => {
-    const q = new URLSearchParams(params).toString();
-    return api(`/api/consumption/visits${q ? '?' + q : ''}`);
+  visits:             (q={})  => {
+    const qs = new URLSearchParams(q).toString();
+    return api(`/api/visits${qs ? '?' + qs : ''}`);
   },
 
-  // analysis
+  // 分析
   analysisDaily:      (s='2023-01-01', e='2023-12-31') =>
                           api(`/api/analysis/daily?start=${s}&end=${e}`),
   analysisHourly:     ()      => api('/api/analysis/hourly'),
@@ -69,8 +65,10 @@ const API = {
   analysisAgeGroup:   ()      => api('/api/analysis/age-group'),
   analysisTypeSummary:()      => api('/api/analysis/type-summary'),
   analysisFpGrowth:   ()      => api('/api/analysis/fpgrowth'),
+  analysisDailyCompare:(s='2023-01-01', e='2023-12-31', split='2023-09-01') =>
+                          api(`/api/analysis/daily-compare?start=${s}&end=${e}&split_date=${split}`),
 
-  // predict
+  // 预测
   predict:            (type, features) => api('/api/predict', {
                             method: 'POST', body: { type, features } }),
   predictRegression:  ()      => api('/api/predict/regression'),
@@ -78,12 +76,15 @@ const API = {
   predictClustering:  ()      => api('/api/predict/clustering'),
   predictCompare:     ()      => api('/api/predict/compare'),
 
-  // realtime
+  // 实时数据
   visitRecent:        (limit=20) => api(`/api/realtime/visit-recent?limit=${limit}`),
   visitorProfile:     (id)    => api(`/api/realtime/visitor/${id}`),
   attractionStat:     (id)    => api(`/api/realtime/attraction/${id}`),
+  publishReview:      (body)  => api('/api/realtime/publish/review', { method: 'POST', body }),
+  publishEvent:       (body)  => api('/api/realtime/publish/event',  { method: 'POST', body }),
+  kafkaStatus:        ()      => api('/api/realtime/kafka/status'),
 
-  // admin (system management)
+  // 系统管理
   adminStatus:        ()      => api('/api/admin/status'),
   adminContainers:    ()      => api('/api/admin/containers'),
   adminModels:        ()      => api('/api/admin/models'),
@@ -96,3 +97,4 @@ const API = {
   adminPipeline:      (actions) => api('/api/admin/pipeline', {
                               method: 'POST', body: { actions } }),
 };
+window.API = API;

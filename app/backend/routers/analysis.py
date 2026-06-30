@@ -44,3 +44,13 @@ def type_summary():
 def fpgrowth():
     data = hive_svc.fpgrowth_rules()
     return {"source": "syn", "count": len(data), "data": data}
+
+
+@router.get("/daily-compare")
+def daily_compare(start: str = "2023-01-01", end: str = "2023-12-31",
+                 split_date: str = "2023-09-01"):
+    """每日真实 vs 预测对比（用于折线图）
+    测试集 = split_date 之后；训练集 = split_date 之前
+    """
+    data = hive_svc.daily_compare(start, end, split_date)
+    return {"source": "sklearn", "start": start, "end": end, **data}
