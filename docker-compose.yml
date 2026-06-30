@@ -512,6 +512,8 @@ services:
       - ./data:/app/data:ro
       # Mount Spark/Hive jobs scripts for admin_service to trigger them
       - ./app/jobs:/opt/jobs:ro
+      # Mount the pipeline runner script (scripts\run_pipeline.py)
+      - ./scripts:/app/scripts:ro
     environment:
       PYTHONUNBUFFERED: "1"
       PYSPARK_MODELS_DIR: /shared/models
