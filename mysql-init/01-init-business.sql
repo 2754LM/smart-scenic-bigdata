@@ -72,9 +72,11 @@ CREATE TABLE t_visit_record (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游玩记录';
 
 -- ============================================================
--- Permissions: allow hive user (Sqoop + HiveServer2)
+-- Permissions: allow hive user (Hive Metastore + Sqoop)
+--   - `hive`/`hive` will own the `hive_metastore` DB schema
+--   - also needs SELECT/INSERT on `scenic` for Sqoop import
 -- ============================================================
-CREATE USER IF NOT EXISTS 'hive'@'%' IDENTIFIED BY 'hive123';
+CREATE USER IF NOT EXISTS 'hive'@'%' IDENTIFIED BY 'hive';
 GRANT ALL PRIVILEGES ON hive_metastore.* TO 'hive'@'%';
 GRANT ALL PRIVILEGES ON scenic.* TO 'hive'@'%';
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';

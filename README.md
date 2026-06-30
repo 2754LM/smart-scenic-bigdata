@@ -1,13 +1,13 @@
 ﻿# 智能景区大数据平台 (Smart Scenic BigData Platform)
 
 > 选题十八：智能景区管理系统 6.2-6.5 评分点
-> 真分布式大数据集群 (19 容器) + 完整业务系统 (5 页前端 + 49 REST API + Kafka 实时流 + Hive 数仓)
+> 真分布式大数据集群 (17 容器) + 完整业务系统 (5 页前端 + 49 REST API + Kafka 实时流 + Hive 数仓)
 > 一键部署，10 分钟跑通
 
-本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**19 个容器**），完整实现作业 6.2-6.5 全部要求：
-- **6.2 平台搭建** - 19 容器一键部署（HBase 自动 init meta 表，业务表自动建；Hive Metastore 用 PostgreSQL 兼容 Hive 3.1.3 + DataNucleus）
-- **6.3 数据采集** - Sqoop MySQL→HDFS + Kafka 实时流
-- **6.4 数据分析** - Spark 清洗 + Hive 仓库 + 4 回归 + 1 聚类 + 4 分类 (无数据泄漏)
+本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**17 个容器**），完整实现作业 6.2-6.5 全部要求：
+- **6.2 平台搭建** - 17 容器一键部署（HBase 自动 init meta 表，业务表自动建；MySQL 5.7 同时承担业务库 + Hive Metastore）
+- **6.3 数据采集** - Sqoop MySQL→HDFS + Kafka 实时流 (Pyhive 真实查询 Hive，不做静默 fallback)
+- **6.4 数据分析** - Spark 清洗 + Hive 数仓 (HS2 :10000) + 4 回归 + 1 聚类 + 4 分类 (无数据泄漏)
 - **6.5 可视化** - 5 页 Web 前端（含独立 Kafka/HBase 实时流页 + 真实 vs 预测折线）
 
 ---
@@ -21,10 +21,10 @@
 | ZooKeeper | `ZK_VERSION=3.9` | 3 节点 ensemble |
 | Hadoop | `HADOOP_VERSION=3.3.6` | HDFS HA (1 NN + 2 DN) |
 | HBase | `HBASE_VERSION=latest` | 2.1.x (harisekhon/hbase) |
-| Kafka | `KAFKA_VERSION=latest` | KRaft mode (3 brokers) |
+| Kafka | `KAFKA_VERSION=latest` | KRaft mode (2 brokers) |
 | Spark | `SPARK_VERSION=3.4.1` | 1 master + 1 worker |
-| Hive | `HIVE_VERSION=3.1.3` | 数仓（详见 Q8：本项目走 MySQL 兜底） |
-| MySQL | mysql:8.0 | 业务库 + Hive Metastore (合并部署) |
+| Hive | `HIVE_VERSION=3.1.3` | 数仓 (DataNucleus 4.2 + MySQL 5.7 兼容) |
+| MySQL | mysql:5.7 | 业务库 + Hive Metastore (合并部署; DataNucleus 不兼容 8.0) |
 | JDK | `JDK_VERSION=1.8.0_162` | 业务 Hadoop 镜像使用 |
 
 > **变更说明**：原 docx 方案要求 Kafka 3.1.0 (Scala 2.12 + ZK) + HBase 2.4.11，但 Docker Hub 上的 `harisekhon/hbase:2.4.11` 镜像不可用，故切到 `latest`（实际为 2.1.3）。同理 Kafka KRaft 模式更易在容器中编排。
@@ -33,7 +33,7 @@
 
 ## 一、快速开始（10 分钟跑通）
 
-### 1.1 启动大数据平台（19 容器）
+### 1.1 启动大数据平台（17 容器）
 
 ```bat
 cd smart-scenic-bigdata
@@ -41,7 +41,7 @@ scripts\start.bat
 ```
 
 ⏱️ 等待 3-5 分钟（首次启动要 build 镜像 + 初始化 MySQL）。  
-✅ 完成后 14 容器 up，HBase 自动 init 业务表 `scenic_realtime` / `scenic_reviews`。
+✅ 完成后 17 容器 up，HBase 自动 init 业务表 `scenic_realtime` / `scenic_reviews`，Hive 自动 `schematool` 初始化。
 
 ### 1.2 准备 4 个 CSV 数据
 
@@ -137,12 +137,12 @@ scripts\install-deps.bat      REM 创建 venv + pip install -r requirements.txt
 smart-scenic-bigdata/
 ├── README.md                  ← 本文件（主文档）
 ├── LICENSE                    MIT
-├── docker-compose.yml         19 容器编排
+├── docker-compose.yml         17 容器编排
 ├── .env                       端口/密码/镜像版本
 ├── .gitattributes             LF 行尾强制
 │
 ├── docker/                    自定义镜像的 Dockerfile
-│   ├── hive/                  FROM apache/hive:3.1.3 + PostgreSQL JDBC (DataNucleus 兼容)
+│   ├── hive/                  FROM apache/hive:3.1.3 + MySQL 5.x JDBC (DataNucleus 兼容)
 │   └── hadoop/                FROM apache/hadoop + JDK + Sqoop
 │
 ├── config/                    各组件运行时配置（bind mount）
@@ -161,11 +161,11 @@ smart-scenic-bigdata/
 │   └── jobs/                  Spark / Hive / PySpark 训练脚本
 │
 ├── scripts/                   运维脚本（5 个，Windows .bat）
-│   ├── start.bat              1. 一键启动 19 容器（含 HBase 自动 init + Hive Metastore 初始化）
+│   ├── start.bat              1. 一键启动 17 容器（含 HBase 自动 init + Hive Metastore 初始化）
 │   ├── stop.bat               2. 停止所有容器（数据保留）
 │   ├── reset.bat              3. 完全重置（清空所有数据，会询问 yes）
 │   ├── install-deps.bat       4. 安装 Python venv + 依赖（仅 IDE 用）
-│   └── test-e2e.bat           5. 端到端验证（22 项检查）
+│   └── test-e2e.bat           5. 端到端验证（26 项 8 场景：MySQL/HDFS/HBase/Kafka/Spark/Hive/Backend/ML）
 │
 ├── docs/
 │   ├── 作业要求.md            选题要求 + 作业规范（合并）
@@ -180,26 +180,32 @@ smart-scenic-bigdata/
 
 ---
 
-## 四、19 个容器使用情况
+## 四、17 个容器使用情况
 
 | 容器 | 数量 | 实际用途 | 镜像 | 端口 |
 |------|------|---------|------|------|
-| mysql | 1 | 业务库 (scenic) 4 张中文表 | mysql:8.0 | 13306 |
+| mysql | 1 | 业务库 (scenic) + Hive Metastore (`hive_metastore` 库) | mysql:5.7 | 13306 |
 | zookeeper-1/2/3 | 3 | HBase 协调 | zookeeper:3.9 | 12181 |
-| hadoop-namenode | 1 | HDFS + Sqoop + YARN（自定义镜像 + JDK 1.8 + Sqoop）| smart-scenic/hadoop:custom | 19870/18088/19000 |
+| hadoop-namenode | 1 | HDFS + Sqoop + YARN (自定义镜像 + JDK 1.8 + Sqoop) | smart-scenic/hadoop:custom | 19870/18088/19000 |
 | hadoop-datanode-1/2 | 2 | HDFS 副本 | apache/hadoop:3.3.6 | - |
 | hbase-master | 1 | HBase Master | harisekhon/hbase:latest | 11610 |
 | hbase-regionserver-1/2 | 2 | HBase Region 服务 | harisekhon/hbase:latest | 11620-11630 |
-| kafka-1/2 | 2 | 消息队列（KRaft 模式，**不依赖 ZK**）| apache/kafka:latest | 19092/19095 |
+| kafka-1/2 | 2 | 消息队列 (KRaft 模式, **不依赖 ZK**) | apache/kafka:latest | 19092/19095 |
 | spark-master | 1 | PySpark 调度 | apache/spark:3.4.1 | 18080 |
 | spark-worker-1 | 1 | PySpark 执行 | apache/spark:3.4.1 | - |
-| hive-metastore-postgres | 1 | Hive 元数据库（DataNucleus 4.2 + MySQL 8.0 不兼容 → 切 PostgreSQL）| postgres:15-alpine | - |
-| hive-metastore | 1 | Hive 元数据 Thrift 服务 (端口 9083) | smart-scenic/hive:custom | 11083 |
-| hive-server-1/2 | 2 | HiveServer2 多实例 (端口 10000) | smart-scenic/hive:custom | 11010/11011/11012/11013 |
-| demo-backend | 1 | FastAPI 后端 (49 endpoints) | python:3.10-slim | 8000 |
-| (auto-init) | - | HBase 业务表 scenic_realtime / scenic_reviews | (start.bat 一键创建) | - |
+| hive-server-1 | 1 | HiveServer2 :10000 + schematool 自动初始化 | smart-scenic/hive:custom | 11010/11012 |
+| hive-server-2 | 1 | HiveServer2 :10000 (负载均衡多实例) | smart-scenic/hive:custom | 11011/11013 |
+| demo-backend | 1 | FastAPI 后端 (49 endpoints, Pyhive 真实查 Hive) | python:3.10-slim | 8000 |
+| (auto-init) | - | HBase 业务表 scenic_realtime / scenic_reviews + Hive Metastore schema | (start.bat 一键创建) | - |
 
-**结论：19 个容器全部有实际业务代码使用，0 个空跑。**
+**结论：17 个容器全部有实际业务代码使用，0 个空跑。**
+
+### Hive 数仓架构（关键设计）
+- **MySQL 5.7**（一容器双角色）：业务库 `scenic` + Hive Metastore `hive_metastore`
+- **hive-server-1/2**：2 个 HS2 同时连同一个 MySQL metastore（Apache 官方推荐的多实例 HA 模式）
+- **首次启动**：`hive-server-1` 自动调 `schematool -dbType mysql -initSchema` (sentinel 文件 `/opt/hive/conf/.schema_initialized` 幂等)
+- **后端**：`hive_service.py` 通过 `pyhive` 直连 `hive-server-1:10000`，不再有任何静默 fallback
+- **为什么不用 MySQL 8.0**: DataNucleus 4.2 (绑死在 Hive 3.1.3) 生成的 DDL 用 `DEFAULT CHARACTER SET xxx` 语法被 8.0 拒绝
 
 ---
 
@@ -233,7 +239,7 @@ smart-scenic-bigdata/
 ### 5.3 系统管理面板
 
 打开 `manage.html` → **系统管理** tab，一站式管理：
-- 19 容器状态（按存储/协调/计算/NoSQL/消息/数仓/应用分组）
+- 17 容器状态（按存储/协调/计算/NoSQL/消息/数仓/应用分组）
 - 已训练 PySpark 模型列表
 - 4 张 MySQL 表 + 4 个 CSV 文件状态
 - HDFS 分区目录
@@ -409,26 +415,25 @@ scripts\reset.bat       REM 输入 yes 确认，清空所有数据卷
 scripts\start.bat
 ```
 
-### Q8: Hive 数仓架构（PostgreSQL Metastore）
+### Q8: Hive 数仓架构（MySQL 5.7 Metastore）
 
 **当前架构**:
-- `hive-metastore-postgres` (postgres:15-alpine) — Hive 元数据库（**替代 MySQL 8.0**，避开 DataNucleus 4.2 的 `CHARACTER SET` 不兼容问题）
-- `hive-metastore` (Thrift 9083) — 启动时自动 `schematool -dbType postgres -initSchema`
-- `hive-server-1/2` (HiveServer2 :10000) — 2 实例，连接到 Thrift metastore
-- 后端 `hive_service.py` 用 `pyhive` 真实查询 Hive（不再是 MySQL 兜底）
-- 数据流：MySQL → Sqoop → HDFS Parquet → `hive -f ddl.sql` 注册外表 → 后端通过 HS2 查询
+- `mysql` (mysql:5.7) 同一容器兼任业务库 (`scenic`) + Hive Metastore (`hive_metastore` 库)
+- `hive-server-1/2` (HiveServer2 :10000) — 2 个 HS2 实例，启动时由 hive-server-1 调 `schematool -dbType mysql -initSchema`
+- 后端 `hive_service.py` 用 `pyhive` 真实查询 Hive（**无任何静默 fallback**；DDL 没跑则 HTTP 503）
+- 数据流：MySQL (业务) → Sqoop → HDFS Parquet → `hive -f ddl.sql` 注册外表 → 后端通过 HS2 (pyhive) 查询
 
-**为什么用 PostgreSQL 而不是 MySQL 作为 metastore**:
-- DataNucleus 4.2（绑死在 Hive 3.1.3）对 MySQL 8.0 生成的 DDL 用 `CHARACTER SET charset_name` 语法被 MySQL 8.0 拒绝
-- Apache 官方在 `cwiki.apache.org/confluence/x/4z83Bg` 明确推荐 Hive 3.x 用 PostgreSQL ≥ 9.1.13 作为 metastore
-- `big-data-europe/docker-hive`（Docker Hub 上 Star 最多的 Hive 镜像）也是这个方案
+**为什么 MySQL 5.7 而不是 8.0**:
+- DataNucleus 4.2 (绑死在 Hive 3.1.3) 生成的 DDL 用 `DEFAULT CHARACTER SET xxx` 语法，MySQL 8.0 拒绝
+- Apache 官方在 `cwiki.apache.org/confluence/x/4z83Bg` 测试矩阵: MySQL 5.6.17+ 都可工作，5.7 最稳定
+- 升级到 Hive 4.x (DataNucleus 5+) 可回到 MySQL 8.0，但需要重写依赖
 
 ### Q9: 演示流程（演示用）
 
 ```bat
-scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
+scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 打开浏览器：
-  1. http://localhost:8080/manage.html → 系统管理 tab → 看 19 容器 ● 全部绿色
+  1. http://localhost:8080/manage.html → 系统管理 tab → 看 17 容器 ● 全部绿色
   2. 点 ⚡ 一键初始化 → 5-10 分钟后看 4 个已训练模型 (regression / classification)
   3. 切到 http://localhost:8080/predict.html → 选场景 → 输入特征 → 看预测结果
   4. 切到 http://localhost:8080/realtime.html → 点 ⚡ 触发任务 → 验证 HBase 落库
@@ -467,9 +472,9 @@ scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 - demo-backend 镜像比 PySpark 版小 ~600MB
 
 ### 10.6 MySQL 复用
-- 业务库 + Hive Metastore 合并部署
-- 节省资源（一个容器两个用途）
-- MySQL 8.0 是瓶颈：DataNucleus Metastore 不兼容，所以 Hive 走 fallback（见 Q8）
+- 业务库 (`scenic`) + Hive Metastore (`hive_metastore`) 合并部署
+- 节省资源（一个容器两个用途，无需再启 PostgreSQL 容器）
+- 必须是 MySQL 5.7 (DataNucleus 4.2 不兼容 8.0); 见 Q8 详解
 
 ---
 
@@ -477,9 +482,9 @@ scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 
 | 作业要求 | 本项目实现 | 状态 |
 |---------|----------|------|
-| 6.2 平台搭建 | 19 容器一键部署 (脚本化) | ✅ |
-| 6.3 数据采集 | Sqoop MySQL→HDFS + Kafka 实时流 (HBase 落库) | ✅ |
-| 6.4 数据分析 | Spark 清洗 + **MySQL 兜底** + 4 回归 + 1 聚类 + 4 分类 | ✅ |
+| 6.2 平台搭建 | 17 容器一键部署 (脚本化) | ✅ |
+| 6.3 数据采集 | Sqoop MySQL→HDFS + Kafka 实时流 (HBase 落库, 无降级 fallback) | ✅ |
+| 6.4 数据分析 | Spark 清洗 + **Hive 真实查询** (pyhive → HS2) + 4 回归 + 1 聚类 + 4 分类 | ✅ |
 | 6.5 可视化 | 5 页前端 (含独立实时流页 + 真实 vs 预测折线) | ✅ |
 
 详细作业要求见 [docs/作业要求.md](docs/作业要求.md)。  
@@ -493,16 +498,16 @@ scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 
 | 脚本 | 用途 | 何时用 |
 |------|------|--------|
-| `start.bat` | 一键启动 19 容器（含 HBase 自动 init + Hive Metastore init） | 每天开机第一次 |
+| `start.bat` | 一键启动 17 容器（含 HBase 自动 init + Hive Metastore init） | 每天开机第一次 |
 | `stop.bat` | 停止所有容器（数据保留在 volume） | 不用时 |
 | `reset.bat` | 完全重置（清空所有数据卷，会询问 yes） | 重新开始 |
 | `install-deps.bat` | 创建本地 venv + pip install（仅 IDE 用） | 用编辑器写代码时 |
-| `test-e2e.bat` | 22 项端到端验证（容器/MySQL/HDFS/HBase/Kafka/Spark/Backend/ML）| CI / 调试 |
+| `test-e2e.bat` | 26 项端到端验证（8 场景：MySQL/HDFS/HBase/Kafka/Spark/Hive/Backend/ML）| CI / 调试 |
 
 **典型工作流**：
 ```bat
-scripts\start.bat      REM 第一次：启动 19 容器
-scripts\test-e2e.bat   REM 验证：22 项应该全 PASS
+scripts\start.bat      REM 第一次：启动 17 容器
+scripts\test-e2e.bat   REM 验证：8 场景 26 项应该全 PASS
 REM 浏览器 http://localhost:8080 玩耍 (5 页 + 49 API)
 scripts\stop.bat       REM 关闭
 ```
@@ -539,14 +544,10 @@ docker stop demo-backend
 
 ### 前端热刷新
 
-前端用 `livereload` 启：
+前端文件改完直接刷新浏览器即可（demo-backend 用 volume 挂载，本地 vscode 保存后浏览器
+再开同一个 URL 就生效；如果改了 .js 缓存了，按 Ctrl+Shift+R 强刷）。
 
-```bat
-cd app\frontend
-..\..\scripts\dev-frontend.py   REM 需先 .venv install -r requirements.txt
-```
-
-访问 http://localhost:8080，改 .html/.js/.css 自动刷新浏览器。
+不需要 livereload 之类的 hot-reload — 静态 HTML/JS 用强刷够用，少装一个依赖。
 
 ### 文件监听项目结构
 

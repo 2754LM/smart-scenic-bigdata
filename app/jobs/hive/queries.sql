@@ -2,8 +2,10 @@
 -- HiveQL 复杂查询 - 选题十八 智能景区管理系统
 -- =====================================================
 -- 作业要求：
---   使用HiveQL进行复杂查询，如计算每个景点的日均游客数量、
---   查询高消费游客、对比不同时间段的景点热度等
+--   使用 HiveQL 进行复杂查询，如计算每个景点的日均游客数量、
+--   查询高消费游客、对比不同时间段的景点热度等.
+--
+-- 列名严格对齐 clean.py 输出. 详见 views.sql 头部注释.
 -- =====================================================
 
 USE scenic_ext;
@@ -20,9 +22,9 @@ SET hive.groupby.skewindata = true;
 -- =====================================================
 SELECT
     a.attraction_name,
-    COUNT(DISTINCT vr.visitor_id) / COUNT(DISTINCT vr.dt)  AS avg_daily_visitors,
-    COUNT(DISTINCT vr.dt)                                 AS active_days,
-    COUNT(DISTINCT vr.visitor_id)                         AS total_visitors
+    COUNT(DISTINCT vr.visitor_id) / GREATEST(COUNT(DISTINCT vr.visit_date), 1) AS avg_daily_visitors,
+    COUNT(DISTINCT vr.visit_date)   AS active_days,
+    COUNT(DISTINCT vr.visitor_id)   AS total_visitors
 FROM ext_t_visit_record vr
 JOIN ext_t_attraction a
     ON vr.attraction_id = a.attraction_id
@@ -39,8 +41,8 @@ SELECT
     v.visitor_name,
     v.region,
     v.age_group,
-    COUNT(c.consumption_id)      AS purchase_count,
-    SUM(c.amount)                AS total_amount,
+    COUNT(c.consumption_id)        AS purchase_count,
+    SUM(c.amount)                  AS total_amount,
     RANK() OVER (ORDER BY SUM(c.amount) DESC) AS amount_rank
 FROM ext_t_consumption c
 JOIN ext_t_visitor v
@@ -51,14 +53,13 @@ LIMIT 20;
 
 
 -- =====================================================
--- 3. 不同时段的景点热度对比（小时 x 景点）
+-- 3. 不同时段的景点热度对比（小时 x 景点, Top 50）
 -- =====================================================
--- 用 RANK 找出每个景点最热的小时段
 WITH hourly AS (
     SELECT
         attraction_id,
-        HOUR(visit_time)         AS visit_hour,
-        COUNT(*)                 AS visit_count
+        HOUR(visit_time) AS visit_hour,
+        COUNT(*)         AS visit_count
     FROM ext_t_visit_record
     GROUP BY attraction_id, HOUR(visit_time)
 )
@@ -94,10 +95,10 @@ ORDER BY total_amount DESC;
 -- =====================================================
 SELECT
     v.region,
-    COUNT(DISTINCT c.visitor_id)   AS unique_buyers,
-    COUNT(c.consumption_id)        AS purchase_count,
-    SUM(c.amount)                  AS total_amount,
-    SUM(c.amount) / COUNT(DISTINCT c.visitor_id)  AS avg_per_visitor
+    COUNT(DISTINCT c.visitor_id)                          AS unique_buyers,
+    COUNT(c.consumption_id)                               AS purchase_count,
+    SUM(c.amount)                                         AS total_amount,
+    SUM(c.amount) / GREATEST(COUNT(DISTINCT c.visitor_id), 1) AS avg_per_visitor
 FROM ext_t_consumption c
 JOIN ext_t_visitor v
     ON c.visitor_id = v.visitor_id
@@ -110,12 +111,12 @@ LIMIT 20;
 -- 6. 月度游客消费趋势
 -- =====================================================
 SELECT
-    SUBSTR(dt, 1, 7)               AS month,
-    COUNT(DISTINCT visitor_id)     AS monthly_visitors,
-    COUNT(consumption_id)          AS monthly_purchases,
-    SUM(amount)                    AS monthly_revenue
+    SUBSTR(consume_date, 1, 7)        AS month,
+    COUNT(DISTINCT visitor_id)         AS monthly_visitors,
+    COUNT(consumption_id)              AS monthly_purchases,
+    SUM(amount)                        AS monthly_revenue
 FROM ext_t_consumption
-GROUP BY SUBSTR(dt, 1, 7)
+GROUP BY SUBSTR(consume_date, 1, 7)
 ORDER BY month;
 
 
@@ -124,8 +125,8 @@ ORDER BY month;
 -- =====================================================
 SELECT
     CASE
-        WHEN DAYOFWEEK(TO_DATE(dt)) IN (1, 7)  THEN '周末'
-        ELSE '工作日'
+        WHEN DAYOFWEEK(visit_date) IN (1, 7)  THEN 'weekend'
+        ELSE 'weekday'
     END                              AS day_type,
     COUNT(DISTINCT visitor_id)       AS unique_visitors,
     COUNT(record_id)                 AS total_visits,
@@ -133,8 +134,8 @@ SELECT
 FROM ext_t_visit_record
 GROUP BY
     CASE
-        WHEN DAYOFWEEK(TO_DATE(dt)) IN (1, 7)  THEN '周末'
-        ELSE '工作日'
+        WHEN DAYOFWEEK(visit_date) IN (1, 7)  THEN 'weekend'
+        ELSE 'weekday'
     END
 ORDER BY day_type;
 

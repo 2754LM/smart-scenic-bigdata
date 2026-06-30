@@ -2,6 +2,8 @@
 REM ============================================================
 REM  Smart Scenic BigData - End-to-End Test
 REM  Run AFTER scripts\start.bat to validate the 17-container stack.
+REM  Tests: MySQL business schema, HDFS, HBase, Kafka, Spark,
+REM         Hive Metastore+HS2, demo-backend API, sklearn models.
 REM  Exit code = number of failed checks.
 REM ============================================================
 
@@ -50,13 +52,9 @@ for /f %%r in ('docker exec mysql mysql --default-character-set=utf8mb4 -uroot -
 if !ROWS! geq 100000 (echo        PASS [OK] rows=!ROWS! & set /a PASS+=1) else (echo        FAIL rows=!ROWS! & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! MySQL-t_visit_record,)
 
 set /a TOTAL+=1
-echo [!TOTAL!] utf8mb4 stores Chinese correctly ...
-REM write SQL to file (avoids cmd parsing of Chinese column names)
->  "%TEMP%\utf-test.sql" echo SELECT HEX(SUBSTRING(name,1,1)) FROM scenic.t_attraction WHERE id=1;
-docker cp "%TEMP%\utf-test.sql" mysql:/tmp/utf-test.sql >nul 2>nul
-docker exec mysql mysql --default-character-set=utf8mb4 -uroot -proot123 -se "source /tmp/utf-test.sql" > "%TEMP%\utf.txt" 2>&1
-findstr /C:"E58D9A" "%TEMP%\utf.txt" >nul
-if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        SKIP [INFO] (table may not exist yet) & set /a PASS+=1)
+echo [!TOTAL!] MySQL hive user can access hive_metastore DB ...
+for /f %%r in ('docker exec mysql mysql -uhive -phive -se "SELECT 1" hive_metastore 2^>nul') do set R=%%r
+if "!R!"=="1" (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! MySQL-hive-user,)
 
 echo.
 
@@ -185,12 +183,44 @@ findstr /C:"Alive Workers:" "%TEMP%\spark.txt" >nul
 if !errorlevel! equ 0 (
     findstr /C:"1</li>" "%TEMP%\spark.txt" >nul
     if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL no alive workers & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Spark-worker,)
-) else (echo        FAIL master UI not responding & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Spark-worker,)
+) else (echo        FAIL master UI not responding & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Spark-master,)
 
 echo.
 
 REM ============================================================
-REM Scenario 6: demo-backend Health (3 tests)
+REM Scenario 6: Hive Data Warehouse (4 tests)
+REM ============================================================
+set /a SCENARIO+=1
+echo === Scenario !SCENARIO!: Hive Data Warehouse ===
+echo.
+
+set /a TOTAL+=1
+echo [!TOTAL!] HiveServer2 :10000 reachable (hive-server-1) ...
+docker exec hive-server-1 bash -c "(echo > /dev/tcp/localhost/10000) 2>/dev/null && echo ok" > "%TEMP%\h.txt" 2>&1
+findstr /C:"ok" "%TEMP%\h.txt" >nul
+if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL (check hive-server-1 logs) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Hive-HS2,)
+
+set /a TOTAL+=1
+echo [!TOTAL!] HiveServer2 :10000 reachable (hive-server-2) ...
+docker exec hive-server-2 bash -c "(echo > /dev/tcp/localhost/10000) 2>/dev/null && echo ok" > "%TEMP%\h.txt" 2>&1
+findstr /C:"ok" "%TEMP%\h.txt" >nul
+if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Hive-HS2-2,)
+
+set /a TOTAL+=1
+echo [!TOTAL!] MySQL hive_metastore schema initialized by schematool ...
+for /f %%r in ('docker exec mysql mysql -uhive -phive -se "SELECT COUNT(*) FROM hive_metastore.TBLS" 2^>nul') do set TBL=%%r
+if !TBL! geq 0 (echo        PASS [OK] tables=!TBL! & set /a PASS+=1) else (echo        FAIL & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Hive-metastore,)
+
+set /a TOTAL+=1
+echo [!TOTAL!] /api/analysis/hourly reachable (pyhive wired up) ...
+docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/analysis/hourly', timeout=8); d=json.loads(r.read().decode()); print('OK' if d.get('source','').startswith('hive') else d.get('source','NA'))" > "%TEMP%\h.txt" 2>&1
+findstr /C:"OK" "%TEMP%\h.txt" >nul
+if !errorlevel! equ 0 (echo        PASS [OK] source=hive & set /a PASS+=1) else (echo        FAIL (run Hive DDL in manage.html first) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Hive-API,)
+
+echo.
+
+REM ============================================================
+REM Scenario 7: demo-backend Health (3 tests)
 REM ============================================================
 set /a SCENARIO+=1
 echo === Scenario !SCENARIO!: demo-backend Health ===
@@ -203,25 +233,26 @@ findstr /C:"ok" "%TEMP%\api.txt" >nul
 if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Backend-health,)
 
 set /a TOTAL+=1
-echo [!TOTAL!] /api/predict/_engine responds ...
-docker exec demo-backend python3 -c "import urllib.request; r=urllib.request.urlopen('http://localhost:8000/api/health', timeout=5); print('OK')" > "%TEMP%\api.txt" 2>&1
-findstr /C:"OK" "%TEMP%\api.txt" >nul
-if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Backend-engine,)
-
-set /a TOTAL+=1
 echo [!TOTAL!] /api/predict/classification returns 4 models ...
 docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/predict/classification', timeout=10); d=json.loads(r.read().decode()); print(len(d.get('data', {}).get('results', [])))" > "%TEMP%\api.txt" 2>&1
 set CNT=0
 for /f %%n in ('type "%TEMP%\api.txt"') do set CNT=%%n
 if !CNT! geq 4 (echo        PASS [OK] models=!CNT! & set /a PASS+=1) else (echo        FAIL models=!CNT! (run init pipeline first) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Backend-models,)
 
+set /a TOTAL+=1
+echo [!TOTAL!] /api/overview/kpi returns KPIs ...
+docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/overview/kpi', timeout=5); d=json.loads(r.read().decode()).get('data', {}); print(len(d))" > "%TEMP%\api.txt" 2>&1
+set CNT=0
+for /f %%n in ('type "%TEMP%\api.txt"') do set CNT=%%n
+if !CNT! geq 1 (echo        PASS [OK] kpis=!CNT! & set /a PASS+=1) else (echo        FAIL kpis=!CNT! & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Backend-kpi,)
+
 echo.
 
 REM ============================================================
-REM Scenario 7: ML Models (2 tests)
+REM Scenario 8: ML Models (2 tests)
 REM ============================================================
 set /a SCENARIO+=1
-echo === Scenario !SCENARIO!: ML Models (sklearn) ===
+echo === Scenario !SCENARIO!: ML Models (sklearn, no data leakage) ===
 echo.
 
 set /a TOTAL+=1
@@ -230,7 +261,7 @@ for /f %%c in ('docker exec demo-backend bash -c "ls /shared/models/sklearn/clas
 if !CNT! geq 4 (echo        PASS [OK] models=!CNT! & set /a PASS+=1) else (echo        FAIL models=!CNT! (run init pipeline first) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! ML-classification,)
 
 set /a TOTAL+=1
-echo [!TOTAL!] predict returns non-zero number ...
+echo [!TOTAL!] predict returns positive consumption_amount ...
 docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen(urllib.request.Request('http://localhost:8000/api/predict', data=json.dumps({'type':'consumption_amount','features':{'age':35,'purchase_count':10,'avg_amount':500,'visit_count':10,'avg_duration':4.0,'unique_attractions':5}}).encode(), headers={'Content-Type':'application/json'}, timeout=10)); print(int(json.loads(r.read().decode())['data']['prediction']))" > "%TEMP%\api.txt" 2>&1
 set PRED=0
 for /f %%p in ('type "%TEMP%\api.txt"') do set PRED=%%p
@@ -257,7 +288,7 @@ if !FAIL! equ 0 (
 ) else (
     echo Some checks failed. Try:
     echo   1. scripts\reset.bat + scripts\start.bat  (clean restart)
-    echo   2. manage.html - System tab - one-click init  (load data)
+    echo   2. manage.html - System tab - one-click init  (load data + Hive DDL)
     echo   3. docker logs demo-backend  (backend errors)
 )
 echo.

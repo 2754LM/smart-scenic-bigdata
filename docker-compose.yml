@@ -23,17 +23,20 @@ volumes:
   hbase-rs2-data:
   kafka1-data:
   kafka2-data:
-  hive-metastore-postgres-data:
   hive-server1-data:
   hive-server2-data:
   shared-data:
 
 services:
   # ========================================================
-  # MySQL - 娑撴艾濮熼弫鐗堝祦 + Hive Metastore
+  # MySQL 5.7 - 业务库 (scenic) + Hive Metastore (hive_metastore 库)
+  # ------------------------------------------------------------
+  # DataNucleus 4.2 (绑死在 Hive 3.1.3) 生成的 DDL 用
+  # "DEFAULT CHARACTER SET charset_name" 语法被 MySQL 8.0 拒绝,
+  # 改用 MySQL 5.7 完全兼容 (apache 官方测试矩阵: mysql >= 5.6.17).
   # ========================================================
   mysql:
-    image: mysql:8.0
+    image: mysql:5.7
     container_name: mysql
     mem_limit: 1024m
     hostname: mysql
@@ -52,7 +55,6 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      - --default-authentication-plugin=mysql_native_password
       - --local-infile=1
     networks:
       - bigdata-net
@@ -303,84 +305,17 @@ services:
       - bigdata-net
 
   # ========================================================
-  # Hive Metastore — PostgreSQL backend (DataNucleus 4.2 官方推荐)
-  # Hive 3.1.3 + DataNucleus + MySQL 8.0 的 CHARACTER SET 语法不兼容
-  # 改用 PostgreSQL: https://cwiki.apache.org/confluence/x/4z83Bg (官方推荐)
-  # ========================================================
-  hive-metastore-postgres:
-    image: postgres:15-alpine
-    container_name: hive-metastore-postgres
-    mem_limit: 512m
-    hostname: hive-metastore-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: hive_metastore
-      POSTGRES_USER: hive
-      POSTGRES_PASSWORD: hive
-      TZ: Asia/Shanghai
-    volumes:
-      - hive-metastore-postgres-data:/var/lib/postgresql/data
-    networks:
-      - bigdata-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hive -d hive_metastore"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  # ========================================================
-  # Hive Metastore (Thrift service, 端口 9083)
-  # 由 hive-server-1 容器兼任 (CDH 镜像已经包含 metastore 服务)
-  # ========================================================
-  hive-metastore:
-    image: smart-scenic/hive:custom
-    container_name: hive-metastore
-    mem_limit: 1024m
-    hostname: hive-metastore
-    restart: unless-stopped
-    build:
-      context: ./docker/hive
-      dockerfile: Dockerfile
-    depends_on:
-      hive-metastore-postgres:
-        condition: service_healthy
-      hadoop-namenode:
-        condition: service_started
-    environment:
-      HIVE_CONF_DIR: /opt/hive/conf
-      SERVICE_NAME: metastore
-      JAVA_HOME: /usr/local/openjdk-8
-      SKIP_SCHEMA_INIT: "true"
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        export JAVA_HOME=/usr/local/openjdk-8
-        # 首次启动初始化 schema (idempotent by sentinel file)
-        if [ ! -f /opt/hive/conf/.metastore_initialized ]; then
-          echo "[hive-metastore] init schema (postgres backend)..."
-          /opt/hive/bin/schematool -dbType postgres -initSchema && \
-            touch /opt/hive/conf/.metastore_initialized && \
-            echo "[hive-metastore] schema initialized." || \
-            echo "[hive-metastore] schema already exists (skipping)."
-        fi
-        echo "[hive-metastore] starting metastore thrift service..."
-        exec /opt/hive/bin/hive --skiphadoopversion --service metastore
-    volumes:
-      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
-      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
-    ports:
-      - "${PORT_HIVE_METASTORE}:9083"
-    networks:
-      - bigdata-net
-    healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9083 || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 12
-      start_period: 90s
-
-  # ========================================================
-  # Hive Server (HS2, port 10000) — 2 个实例
+  # Hive 数仓 (HS2 + embedded metastore → MySQL 5.7)
+  # ------------------------------------------------------------
+  # 关键设计：
+  #   1) Metastore DB = MySQL (hive 容器外的 mysql 容器, 库名 hive_metastore)
+  #   2) DataNucleus 4.2 + MySQL 8.0 不兼容 (CHARACTER SET 语法).
+  #      把 mysql 切到 5.7 + 用 mysql-connector-j 5.1.x (Hive 3.1.3 自带
+  #      类路径已支持 5.x)。
+  #   3) 两个 HS2 同时连同一个 mysql metastore 库, 这是 Apache 官方推荐
+  #      的多实例 HA 模式 (high availability via shared RDBMS metastore).
+  #   4) 首次启动由 hive-server-1 执行 `schematool -dbType mysql -initSchema`
+  #      (sentinel 文件幂等). hive-server-2 等 10000 端口就绪后再启动.
   # ========================================================
   hive-server-1:
     build:
@@ -388,12 +323,11 @@ services:
       dockerfile: Dockerfile
     image: smart-scenic/hive:custom
     container_name: hive-server-1
-    mem_limit: 1024m
+    mem_limit: 1280m
     hostname: hive-server-1
     restart: unless-stopped
     depends_on:
-      - hive-metastore-postgres
-      - hive-metastore
+      - mysql
       - hadoop-namenode
     ports:
       - "${PORT_HIVE}:10000"
@@ -402,20 +336,39 @@ services:
       HIVE_CONF_DIR: /opt/hive/conf
       SERVICE_NAME: hiveserver2
       JAVA_HOME: /usr/local/openjdk-8
-      IS_RESUME: "true"
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         export JAVA_HOME=/usr/local/openjdk-8
-        # wait for metastore thrift to be ready (avoid race on first connect)
-        for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-          if (echo > /dev/tcp/hive-metastore/9083) 2>/dev/null; then
-            echo "[hive-server-1] metastore ready, starting hiveserver2"
+        # wait for MySQL to be reachable (init could still be running)
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+          if bash -c "(echo > /dev/tcp/mysql/3306)" 2>/dev/null; then
+            echo "[hive-server-1] mysql reachable"
             break
           fi
-          echo "[hive-server-1] waiting for metastore... $$i"
-          sleep 5
+          echo "[hive-server-1] waiting for mysql... $$i/15"
+          sleep 4
         done
+        # wait for hadoop namenode
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if (echo > /dev/tcp/hadoop-namenode/9000) 2>/dev/null; then
+            echo "[hive-server-1] namenode reachable"
+            break
+          fi
+          echo "[hive-server-1] waiting for namenode... $$i/10"
+          sleep 4
+        done
+        # first-time schema init (idempotent via sentinel file in mounted volume)
+        if [ ! -f /opt/hive/conf/.schema_initialized ]; then
+          echo "[hive-server-1] init schema (first run)..."
+          /opt/hive/bin/schematool -dbType mysql -initSchema && \
+            touch /opt/hive/conf/.schema_initialized && \
+            echo "[hive-server-1] schema initialized." || \
+            echo "[hive-server-1] WARN: schema init failed (may already exist)."
+        else
+          echo "[hive-server-1] schema already initialized (skipping)."
+        fi
+        echo "[hive-server-1] starting hiveserver2..."
         exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
     volumes:
       - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
@@ -428,8 +381,8 @@ services:
       test: ["CMD-SHELL", "echo > /dev/tcp/localhost/10000 || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 12
-      start_period: 90s
+      retries: 15
+      start_period: 60s
 
   hive-server-2:
     build:
@@ -437,12 +390,12 @@ services:
       dockerfile: Dockerfile
     image: smart-scenic/hive:custom
     container_name: hive-server-2
-    mem_limit: 1024m
+    mem_limit: 1280m
     hostname: hive-server-2
     restart: unless-stopped
     depends_on:
-      - hive-metastore-postgres
-      - hive-metastore
+      - mysql
+      - hive-server-1
       - hadoop-namenode
     ports:
       - "${PORT_HIVE_2}:10000"
@@ -451,19 +404,20 @@ services:
       HIVE_CONF_DIR: /opt/hive/conf
       SERVICE_NAME: hiveserver2
       JAVA_HOME: /usr/local/openjdk-8
-      IS_RESUME: "true"
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         export JAVA_HOME=/usr/local/openjdk-8
-        for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-          if (echo > /dev/tcp/hive-metastore/9083) 2>/dev/null; then
-            echo "[hive-server-2] metastore ready, starting hiveserver2"
+        # wait for hive-server-1 to come up (its embedded metastore has the schema)
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+          if (echo > /dev/tcp/hive-server-1/10000) 2>/dev/null; then
+            echo "[hive-server-2] hive-server-1:10000 ready"
             break
           fi
-          echo "[hive-server-2] waiting for metastore... $$i"
-          sleep 5
+          echo "[hive-server-2] waiting for hive-server-1... $$i/20"
+          sleep 4
         done
+        echo "[hive-server-2] starting hiveserver2..."
         exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
     volumes:
       - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
@@ -471,6 +425,12 @@ services:
       - hive-server2-data:/opt/hive/conf
     networks:
       - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/10000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 90s
 
   # ========================================================
   # Kafka Cluster (KRaft mode, latest 镜像)

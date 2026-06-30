@@ -19,9 +19,11 @@ from utils import docker_exec, hbase_shell, now_iso, now_ms
 
 log = logging.getLogger("smart-scenic.hbase")
 
-# When docker / hbase is unavailable, fall back to a synthetic in-memory
-# dataset so the front-end still has data to show. This is **only** used as
-# a demo fallback - the real data path is the docker-exec call below.
+# When Docker is **unavailable on host** (developer running IDE-only without
+# docker daemon, e.g. test code on a fresh clone), fall back to a synthetic
+# in-memory dataset so the front-end still has data to show.
+# This is NOT a fallback for when HBase itself is down - in that case the
+# docker-exec call returns an empty list and the API surfaces real empty data.
 _SYN_DEMO: Optional[List[Dict[str, Any]]] = None
 
 

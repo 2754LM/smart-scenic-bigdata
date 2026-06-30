@@ -20,6 +20,9 @@ docker compose down
 if errorlevel 1 (
     echo [WARN] docker compose down returned non-zero. Some containers may still be running.
 )
+if errorlevel 1 (
+    echo [WARN] docker compose down returned non-zero. Some containers may still be running.
+)
 
 echo.
 echo ==========================================================

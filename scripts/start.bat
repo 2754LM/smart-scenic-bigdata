@@ -4,7 +4,8 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM  Smart Scenic BigData Platform - One-Click Start
-REM  19-container Docker stack (Hadoop HA + Spark + HBase + Kafka + Hive)
+REM  17 Docker containers: Hadoop HA + Spark + HBase + Kafka + Hive
+REM  MySQL 5.7 holds both business data and the Hive Metastore.
 REM  Double-click on Windows. Auto-waits for each component ready.
 REM ============================================================
 
@@ -33,12 +34,12 @@ echo [OK]   Docker ready.
 echo(
 
 REM ---------- 1. Stop any leftover ----------
-echo [1/6] Stopping any leftover containers (data preserved)...
+echo [1/5] Stopping any leftover containers (data preserved)...
 docker compose down --remove-orphans 2>nul
 echo(
 
 REM ---------- 2. Start MySQL + ZK first (foundation) ----------
-echo [2/6] Starting MySQL + ZooKeeper (3-node ensemble)...
+echo [2/5] Starting MySQL 5.7 + ZooKeeper (3-node ensemble)...
 docker compose up -d mysql zookeeper-1 zookeeper-2 zookeeper-3
 if errorlevel 1 (
     echo [FAIL] Failed to start MySQL + ZK. Check 'docker compose logs mysql'.
@@ -49,7 +50,7 @@ echo [OK]   MySQL + ZK started.
 echo(
 
 REM ---------- 3. Wait for MySQL healthy ----------
-echo [3/6] Waiting for MySQL (up to 90s for first-time init)...
+echo [3/5] Waiting for MySQL (up to 90s for first-time init)...
 set MYSQL_OK=0
 for /l %%i in (1,1,45) do (
     for /f %%s in ('docker inspect --format="{{.State.Health.Status}}" mysql 2^>nul') do set STATUS=%%s
@@ -67,12 +68,13 @@ echo [WARN] MySQL healthcheck timeout. Continuing anyway...
 :mysql_done
 echo(
 
-REM ---------- 4. Start big-data + app stack (no Hive yet) ----------
-echo [4/6] Starting 13 services (Hadoop, Spark, HBase, Kafka, Backend)...
+REM ---------- 4. Start big-data + app + Hive stack ----------
+echo [4/5] Starting 13 services (Hadoop, Spark, HBase, Kafka, Backend, Hive x2)...
 echo        ^> hadoop-namenode, datanode x2
 echo        ^> spark-master, spark-worker-1
 echo        ^> hbase-master, regionserver x2
 echo        ^> kafka-1, kafka-2
+echo        ^> hive-server-1, hive-server-2 (共享 mysql metastore)
 echo        ^> demo-backend (FastAPI on 8000)
 docker compose up -d ^
     hadoop-namenode ^
@@ -80,34 +82,22 @@ docker compose up -d ^
     spark-master spark-worker-1 ^
     hbase-master hbase-regionserver-1 hbase-regionserver-2 ^
     kafka-1 kafka-2 ^
+    hive-server-1 hive-server-2 ^
     demo-backend
 if errorlevel 1 (
     echo [FAIL] Failed to start stack. Run 'docker compose logs'.
     pause
     exit /b 1
 )
-echo [OK]   Stack started.
+echo [OK]   Stack started (Hive metastore schema will init in hive-server-1).
 echo(
 
-REM ---------- 5. Start Hive stack (PG metastore + metastore thrift + 2 HS2) ----------
-echo [5/6] Starting Hive (PostgreSQL metastore + 2 HiveServer2 instances)...
-docker compose up -d ^
-    hive-metastore-postgres ^
-    hive-metastore ^
-    hive-server-1 hive-server-2
-if errorlevel 1 (
-    echo [FAIL] Failed to start Hive stack. Run 'docker compose logs hive-metastore'.
-    pause
-    exit /b 1
-)
-echo [OK]   Hive stack started (schema init may take ~30s).
-echo(
-
-REM ---------- 6. Wait for key services ----------
-echo [6/6] Waiting for services to become ready (up to 4 min)...
+REM ---------- 5. Wait for key services ----------
+echo [5/5] Waiting for services to become ready (up to 4 min)...
 echo        ^> Hadoop namenode (port 9000)
 echo        ^> HBase master (meta online)
 echo        ^> demo-backend (port 8000)
+echo        ^> HiveServer2 :10000 (hive-server-1)
 echo(
 
 set NAMENODE_OK=0
@@ -127,10 +117,6 @@ for /l %%i in (1,1,120) do (
         echo [OK]   HDFS namenode:9000 ready.
     )
     del "%TEMP%\nn-probe.out" 2>nul
-    if !errorlevel! equ 0 if !NAMENODE_OK! equ 0 (
-        set NAMENODE_OK=1
-        echo [OK]   HDFS namenode:9000 ready.
-    )
 
     REM -- demo-backend health
     for /f %%h in ('docker inspect --format="{{.State.Health.Status}}" demo-backend 2^>nul') do set BH=%%h
@@ -189,10 +175,9 @@ del "%~dp0\.tmp-hbase-status.hbase" 2>nul
 echo(
 echo(
 
-REM ---------- Frontend serve ----------
-REM   Frontend is served by demo-backend (port 8080 inside container, mapped to host 8080)
+REM ---------- Final output ----------
 echo ==========================================================
-echo   All services up!
+echo   All services up! (17 containers, MySQL 5.7 backs Hive too)
 echo ==========================================================
 echo(
 echo   Frontend:        http://localhost:8080
@@ -200,6 +185,8 @@ echo   API docs:        http://localhost:8000/docs
 echo   HBase Web UI:    http://localhost:11610
 echo   Spark Web UI:    http://localhost:18080
 echo   Hadoop NN UI:    http://localhost:19870
+echo   HiveServer2 1:   http://localhost:11010   (beeline host)
+echo   HiveServer2 2:   http://localhost:11011
 echo(
 echo   Container status:
 for /f "tokens=*" %%c in ('docker compose ps --format "{{.Name}}\t{{.Status}}" 2^>nul') do (
@@ -209,10 +196,10 @@ echo(
 echo Next steps:
 echo   1. Open http://localhost:8080 in browser
 echo   2. Click "manage.html" -^> "System tab" -^> "one-click init" to load data
-echo      (CSV -^> MySQL -^> Sqoop -^> Spark clean -^> train models, ~5-10 min)
+echo      (CSV -^> MySQL -^> Sqoop -^> Spark clean -^> Hive DDL -^> train models, ~5-10 min)
+echo   3. Hive DDL must run first (step 5) before analysis APIs return data.
 echo(
 echo To stop: run scripts\stop.bat
 echo To reset: run scripts\reset.bat
 echo(
 pause
-

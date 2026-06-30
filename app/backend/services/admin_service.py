@@ -307,27 +307,53 @@ def _op_spark_clean(job: Job) -> None:
 
 
 def _op_hive_ddl(job: Job) -> None:
-    """Hive DDL + 视图：4 张 ext_t_ 表 + 4 个视图"""
+
+    """Run Hive DDL + views via beeline (Hive 2+ recommended)."""
+
     for sql_file in ["ddl.sql", "views.sql"]:
-        job.log_lines.append(f"  hive -f /opt/jobs/hive/{sql_file}")
-        cmd = ["docker", "exec", "hive-server-1", "hive", "-f", f"/opt/jobs/hive/{sql_file}"]
+
+        job.log_lines.append(f"  beeline -f /opt/jobs/hive/{sql_file} (HS2=hive-server-1:10000)")
+
+        cmd = [
+            "docker", "exec", "hive-server-1",
+            "bash", "-c",
+            f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/{sql_file}",
+        ]
         r = _run_in_container(*cmd, timeout=300)
         proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
         if proc["stdout"]:
-            for line in proc["stdout"].splitlines()[-20:]:
+            important = [
+                line for line in proc["stdout"].splitlines()
+                if "FAILED" in line or "Error" in line or "Table" in line
+                or "View" in line or "OK" in line or "rows selected" in line
+            ][-15:]
+            for line in important:
                 job.log_lines.append(f"    {line}")
         if proc["returncode"] != 0:
-            raise RuntimeError(f'hive {sql_file} failed: {proc["stderr"][-500:]}')
+            raise RuntimeError(f"beeline {sql_file} failed: {proc[chr(39)+chr(115)+chr(116)+chr(100)+chr(101)+chr(114)+chr(114)+chr(39)][-500:]}")
+
 
 
 def _op_hive_queries(job: Job) -> None:
-    """跑 HiveQL 8 个分析查询"""
-    job.log_lines.append("  hive -f /opt/jobs/hive/queries.sql")
-    cmd = ["docker", "exec", "hive-server-1", "hive", "-f", "/opt/jobs/hive/queries.sql"]
+
+    """Run 8 example HiveQL queries via beeline to verify Hive."""
+
+    job.log_lines.append("  beeline -f /opt/jobs/hive/queries.sql (HS2=hive-server-1:10000)")
+
+    cmd = [
+        "docker", "exec", "hive-server-1",
+        "bash", "-c",
+        "/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/queries.sql",
+    ]
+
     r = _run_in_container(*cmd, timeout=600)
+
     proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
-    if proc.stdout:
-        for line in proc.stdout.splitlines()[-30:]:
+
+    if proc["stdout"]:
+
+        for line in proc["stdout"].splitlines()[-30:]:
+
             job.log_lines.append(f"    {line}")
 
 

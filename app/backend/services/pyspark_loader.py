@@ -1,5 +1,5 @@
 """
-PySpark 模型加载器（双轨模式 - 推荐）
+PySpark 模型加载器（双轨模式 - 默认关闭）
 
 工作流：
   1. PySpark 训练脚本 (app/jobs/ml/train.py) 在 spark-master 容器内跑
@@ -7,7 +7,17 @@ PySpark 模型加载器（双轨模式 - 推荐）
   3. backend 启动时尝试从 PYSPARK_MODELS_DIR 加载 PipelineModel
   4. 预测时调 model.transform(spark_df) 拿到 prediction 字段
 
-如果 /shared/models/ 没有模型，fallback 到 model_service.py 的 sklearn 训练。
+当前默认路径：demo-backend 镜像只装了 joblib + scikit-learn + numpy，
+没有 PySpark/Java，所有预测走 model_service.py 的 sklearn joblib 路径，
+毫秒级响应，零启动开销 (~600MB 节省)。
+
+如果想启用双轨模式：
+  1. docker/demo-backend/Dockerfile 里加 pyspark + JDK 安装步骤
+  2. demo-backend 启动 env 加 USE_PYSPARK_MODELS=true
+  3. 第一次预测会触发 PySpark 本地 JVM, 延迟 2-5s
+
+本文件的函数被 main.py 启动逻辑引用, 但默认情况下永不调用
+(USE_PYSPARK_MODELS 默认 false).
 """
 from __future__ import annotations
 

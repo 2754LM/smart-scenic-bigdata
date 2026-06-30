@@ -81,3 +81,12 @@ app/jobs/fix_white.py
 
 # 容器内 shared/ 目录（运行时的模型与数据，不进版本库）
 shared/
+
+# 开发期调试脚本 / 测试用 .py（不应进版本库）
+app/jobs/test_*.py
+app/jobs/debug_*.py
+app/jobs/check_pkgs.py
+app/jobs/spark_server.py
+app/jobs/start_spark_server.sh
+app/jobs/spark-submit.sh
+

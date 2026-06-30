@@ -3,11 +3,17 @@
 -- =====================================================
 -- 作业要求：
 --   创建视图，简化复杂查询，提高查询效率
+-- 列名严格对齐 clean.py 输出:
+--   景点: attraction_id, attraction_name, attraction_type, location, open_time
+--   游客: visitor_id, visitor_name, gender, age, region, age_group
+--   消费: consumption_id, consume_time, visitor_id, attraction_id, amount,
+--         consume_level, consume_date
+--   游玩: record_id, visit_time, visitor_id, attraction_id, duration_hours, visit_date
 -- =====================================================
 
 USE scenic_ext;
 
--- 删除已存在的视图
+-- 删除已存在的视图 (idempotent)
 DROP VIEW IF EXISTS v_attraction_summary;
 DROP VIEW IF EXISTS v_daily_visits;
 DROP VIEW IF EXISTS v_high_value_visitors;
@@ -37,17 +43,17 @@ GROUP BY
 
 
 -- =====================================================
--- 2. 每日游客量视图（按时段聚合）
+-- 2. 每日游客量视图（按日期聚合）
 -- =====================================================
 CREATE VIEW v_daily_visits AS
 SELECT
-    dt,
+    visit_date                                                   AS dt,
     attraction_id,
-    COUNT(DISTINCT visitor_id) AS daily_visitors,
-    COUNT(record_id)           AS daily_visit_records,
-    AVG(duration_hours)        AS avg_duration_hours
+    COUNT(DISTINCT visitor_id)                                   AS daily_visitors,
+    COUNT(record_id)                                             AS daily_visit_records,
+    AVG(duration_hours)                                          AS avg_duration_hours
 FROM ext_t_visit_record
-GROUP BY dt, attraction_id;
+GROUP BY visit_date, attraction_id;
 
 
 -- =====================================================
@@ -84,8 +90,3 @@ GROUP BY attraction_id, HOUR(visit_time);
 
 -- 验证
 SHOW VIEWS IN scenic_ext;
-
-SELECT * FROM v_attraction_summary LIMIT 5;
-SELECT * FROM v_daily_visits       LIMIT 5;
-SELECT * FROM v_high_value_visitors LIMIT 5;
-SELECT * FROM v_attraction_hourly_heat LIMIT 5;

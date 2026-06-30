@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <configuration>
-
+    <!--
+      Hive 3.1.3 + DataNucleus 4.2 Metastore connection.
+      MySQL 5.7 is required (DataNucleus emits "DEFAULT CHARACTER SET xxx"
+      DDL which MySQL 8.0 rejects). Database `hive_metastore` is initialized
+      either by the first-start `schematool -dbType mysql -initSchema` in
+      hive-server-1 (sentinel file idempotent), or pre-created externally.
+      Hive user `hive` (password `hive`) is created automatically by
+      mysql-init/01-init-business.sql inside the `mysql` container.
+    -->
     <property>
         <name>javax.jdo.option.ConnectionURL</name>
-        <value>jdbc:postgresql://hive-metastore-postgres:5432/hive_metastore?createDatabaseIfNotExist=true</value>
+        <value>jdbc:mysql://mysql:3306/hive_metastore?createDatabaseIfNotExist=true&amp;useSSL=false&amp;allowPublicKeyRetrieval=true&amp;serverTimezone=Asia/Shanghai</value>
     </property>
     <property>
         <name>javax.jdo.option.ConnectionDriverName</name>
-        <value>org.postgresql.Driver</value>
+        <value>com.mysql.jdbc.Driver</value>
     </property>
     <property>
         <name>javax.jdo.option.ConnectionUserName</name>
@@ -19,6 +27,7 @@
         <value>hive</value>
     </property>
 
+    <!-- Connection pooling (avoid 50+ idle connections during ML load) -->
     <property>
         <name>datanucleus.connectionPool.maxPoolSize</name>
         <value>4</value>
@@ -27,32 +36,28 @@
         <name>datanucleus.connectionPool.maxIdle</name>
         <value>2</value>
     </property>
+
+    <!-- Datanucleus schema auto-create is fine because schematool
+         handles the proper DDL dialect. We disable so a stray HS2
+         doesn't try to recreate tables that another container
+         (hive-server-1) already owns. -->
     <property>
         <name>datanucleus.schema.autoCreateAll</name>
-        <value>true</value>
+        <value>false</value>
     </property>
     <property>
         <name>datanucleus.identifier.case</name>
         <value>MixedCase</value>
     </property>
+
+    <!-- Don't enforce strict schema-tool version check on first connect
+         (we init the schema once, then HS2 can come and go freely). -->
     <property>
         <name>hive.metastore.schema.verification</name>
         <value>false</value>
     </property>
 
-    <property>
-        <name>hive.metastore.uris</name>
-        <value>thrift://hive-metastore:9083</value>
-    </property>
-    <property>
-        <name>hive.metastore.thrift.bind.host</name>
-        <value>0.0.0.0</value>
-    </property>
-    <property>
-        <name>hive.metastore.thrift.port</name>
-        <value>9083</value>
-    </property>
-
+    <!-- HiveServer2 bind config (so demo-backend at hive-server-1:10000 works). -->
     <property>
         <name>hive.server2.thrift.bind.host</name>
         <value>0.0.0.0</value>
@@ -74,21 +79,25 @@
         <value>false</value>
     </property>
 
+    <!-- Execution engine: MapReduce (default in 3.1.3, no YARN needed
+         if queries don't actually need a reducer). For real big-data
+         workloads later, set to "tez" once Tez is installed. -->
     <property>
         <name>hive.execution.engine</name>
         <value>mr</value>
     </property>
 
+    <!-- Warehouse points at HDFS namenode -->
     <property>
         <name>hive.metastore.warehouse.dir</name>
         <value>hdfs://hadoop-namenode:9000/user/hive/warehouse</value>
     </property>
-
     <property>
         <name>fs.defaultFS</name>
         <value>hdfs://hadoop-namenode:9000</value>
     </property>
 
+    <!-- Performance tuning -->
     <property>
         <name>hive.exec.reducers.bytes.per.reducer</name>
         <value>67108864</value>
@@ -105,10 +114,4 @@
         <name>hive.exec.dynamic.partition.mode</name>
         <value>nonstrict</value>
     </property>
-
-    <property>
-        <name>metastore.try.direct.sql.ddl</name>
-        <value>false</value>
-    </property>
-
 </configuration>

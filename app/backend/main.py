@@ -74,24 +74,18 @@ def on_startup() -> None:
     except Exception as e:
         log.warning("HBase seed skipped: %s", e)
 
-    # === 双轨 ML 模式：智能加载（如果没模型，自动触发训练） ===
+    # === ML 模型加载 ===
+    # 当前默认走 sklearn joblib (毫秒级, 无 PySpark 依赖).
+    # pyspark 双轨模式可通过 USE_PYSPARK_MODELS=true 开启,
+    # 但需要在 demo-backend 镜像里装 PySpark + JDK (见 docker/demo-backend/Dockerfile).
     try:
-        from services import pyspark_loader, auto_train
+        from services import auto_train
         status = auto_train.auto_train_if_needed()
-        if status == "has_models":
-            # 已有模型，直接加载
-            if pyspark_loader.load_all():
-                log.info("PySpark models loaded (dual-track mode active)")
-            else:
-                log.warning("PySpark models exist but failed to load, using sklearn fallback")
-        elif status == "training_async":
-            log.info("No PySpark models found. Auto-training in background (~5-10 min)...")
-            log.info("Backend will use sklearn fallback until training finishes.")
-            log.info("Check /api/predict/_engine for status.")
-        else:
-            log.info("PySpark dual-track mode disabled, using sklearn only")
+        if status == "training_async":
+            log.info("Models not trained yet. Auto-training in background (~5-10 min)...")
+            log.info("Backend will use sklearn joblib (in /shared/models/sklearn/*.pkl) once done.")
     except Exception as e:
-        log.warning("PySpark auto-train init failed: %s", e)
+        log.warning("ML auto-train init failed: %s", e)
 
     # === Kafka 后台 consumer：消费 → 写 HBase ===
     try:
@@ -115,18 +109,14 @@ def on_shutdown() -> None:
 
 @app.get("/api/predict/_engine")
 def predict_engine():
-    """返回当前 predict 引擎状态（pyspark vs sklearn）"""
-    try:
-        from services import pyspark_loader, auto_train
-        return {
-            "pyspark_loader": pyspark_loader.get_status(),
-            "auto_train":     {
-                "models_exist": auto_train._has_models(),
-                "use_pyspark":  config.USE_PYSPARK_MODELS,
-            },
-        }
-    except ImportError:
-        return {"pyspark_loaded": False, "error": "pyspark_loader not available"}
+    """返回当前 predict 引擎状态. 当前固定 sklearn joblib."""
+    from services import auto_train, model_service
+    return {
+        "engine": "sklearn",
+        "models_exist": auto_train._has_models(),
+        "models_dir": config.PYSPARK_MODELS_DIR,
+        "models_loaded": sorted(model_service._models.keys()),
+    }
 
 
 @app.get("/")

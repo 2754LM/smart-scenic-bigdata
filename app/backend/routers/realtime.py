@@ -28,7 +28,8 @@ def visit_recent(limit: int = Query(20, ge=1, le=200)):
 
 @router.get("/visitor/{visitor_id}")
 def visitor_profile(visitor_id: int):
-    """查询游客 HBase 实时画像；不存在时回退 MySQL 历史数据"""
+    """查询游客 HBase 实时画像；HBase 里只有触发过 Kafka 任务的游客，
+    没触发过的从 MySQL 取历史聚合（不是故障兜底，是数据真实分布）."""
     data = hbase_svc.visitor_profile(visitor_id)
     if data is None:
         # Fallback: 从 MySQL 取历史数据，标记 source 为 mysql
@@ -43,8 +44,8 @@ def visitor_profile(visitor_id: int):
         visit_count = v.get("游玩次数", 0)
         avg_duration = total_duration / max(visit_count, 1)
         return {
-            "source": "mysql_fallback",
-            "note": "HBase 中无此游客实时画像，返回 MySQL 历史聚合数据",
+            "source": "mysql",
+            "note": "游客未触发过 Kafka 任务（HBase 中无），返回 MySQL 历史聚合数据",
             "data": {
                 "visitor_id": str(visitor_id),
                 "total_visits": visit_count,
@@ -63,7 +64,8 @@ def visitor_profile(visitor_id: int):
 
 @router.get("/attraction/{attraction_id}")
 def attraction_stat(attraction_id: int):
-    """查询景点 HBase 实时统计；不存在时回退 MySQL"""
+    """查询景点 HBase 实时统计；HBase 里只有触发过 Kafka 任务的景点,
+    没触发过的从 MySQL 取历史聚合（不是故障兜底，是数据真实分布）."""
     data = hbase_svc.attraction_stat(attraction_id)
     if data is None:
         from services.mysql_service import query
@@ -74,11 +76,11 @@ def attraction_stat(attraction_id: int):
         from services.mysql_service import _query_df
         df = _query_df("SELECT COUNT(DISTINCT 游客ID) AS visitors, COUNT(*) AS visits, AVG(游玩时长) AS avg_duration FROM t_visit_record WHERE 景点ID = %s", (str(attraction_id),))
         if df.empty:
-            return {"source": "mysql_fallback", "data": {"scenic_id": str(attraction_id), "name": rows[0].get("景点名称"), "type": rows[0].get("类型"), "visitor_count": 0, "visit_count": 0, "avg_duration": 0}}
+            return {"source": "mysql", "data": {"scenic_id": str(attraction_id), "name": rows[0].get("景点名称"), "type": rows[0].get("类型"), "visitor_count": 0, "visit_count": 0, "avg_duration": 0}}
         r = df.iloc[0]
         return {
-            "source": "mysql_fallback",
-            "note": "HBase 中无此景点实时数据，返回 MySQL 历史聚合",
+            "source": "mysql",
+            "note": "景点未触发过 Kafka 任务（HBase 中无），返回 MySQL 历史聚合",
             "data": {
                 "scenic_id": str(attraction_id),
                 "name": rows[0].get("景点名称"),
@@ -108,7 +110,8 @@ class EventIn(BaseModel):
 @router.post("/publish/review")
 def publish_review(review: ReviewIn):
     """发布评论到 Kafka scenic_reviews topic
-    后台 consumer 接收后写入 HBase scenic_reviews
+    后台 consumer 接收后写入 HBase scenic_reviews.
+    Kafka 不可用直接 503 (不要降级直写 HBase 绕过 Kafka).
     """
     r = kproducer.publish_review(
         visitor_id=review.visitor_id,
@@ -117,18 +120,7 @@ def publish_review(review: ReviewIn):
         comment=review.comment,
     )
     if not r.get("ok"):
-        # Kafka 不可用 → 降级直接写 HBase（双写兜底）
-        hbase_svc.put_review(
-            visitor_id=review.visitor_id,
-            attraction_id=review.attraction_id,
-            rating=review.rating,
-            comment=review.comment,
-        )
-        return {
-            "status": "ok",
-            "via": "hbase_fallback",
-            "reason": r.get("error"),
-        }
+        raise HTTPException(503, f"Kafka publish failed: {r.get('error')}")
     return {
         "status": "ok",
         "via": "kafka",
@@ -139,7 +131,8 @@ def publish_review(review: ReviewIn):
 @router.post("/publish/event")
 def publish_event(event: EventIn):
     """发布实时事件到 Kafka scenic_events topic
-    后台 consumer 接收后写入 HBase scenic_realtime
+    后台 consumer 接收后写入 HBase scenic_realtime.
+    Kafka 不可用直接 503 (不要降级直写 HBase 绕过 Kafka).
     """
     if event.event_type not in {"enter", "exit", "consume"}:
         raise HTTPException(400, f"event_type must be one of enter/exit/consume")
@@ -149,16 +142,7 @@ def publish_event(event: EventIn):
         event_type=event.event_type,
     )
     if not r.get("ok"):
-        hbase_svc.put_realtime_event(
-            visitor_id=event.visitor_id,
-            attraction_id=event.attraction_id,
-            event_type=event.event_type,
-        )
-        return {
-            "status": "ok",
-            "via": "hbase_fallback",
-            "reason": r.get("error"),
-        }
+        raise HTTPException(503, f"Kafka publish failed: {r.get('error')}")
     return {
         "status": "ok",
         "via": "kafka",

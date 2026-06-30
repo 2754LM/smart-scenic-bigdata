@@ -1,8 +1,8 @@
 # 智能景区大数据平台 - 项目实现文档
 
 > **作业**: 选题十八 智能景区管理系统  
-> **技术栈**: MySQL · Sqoop · HDFS · Spark · Hive · HBase · Kafka · scikit-learn  
-> **架构**: 17 容器 Docker 集群 (Hadoop HA + Spark + Hive + HBase + Kafka + Flask/FastAPI)
+> **技术栈**: MySQL 5.7 · Sqoop · HDFS · Spark · Hive 3.1.3 · HBase · Kafka · scikit-learn  
+> **架构**: 17 容器 Docker 集群 (Hadoop HA + Spark + Hive 多实例 + HBase + Kafka + FastAPI)
 
 ---
 
@@ -27,14 +27,14 @@
 
 | 类别 | 容器 | 数量 | 角色 |
 |---|---|---|---|
-| 存储 | mysql | 1 | 业务库 (4 张表) |
+| 存储 | mysql | 1 | 业务库 (4 张表) + Hive Metastore (`hive_metastore` 库) |
 | 存储 | hadoop-namenode, hadoop-datanode-{1,2} | 3 | HDFS HA (单 NN + 2 DN) |
-| 计算 | spark-master, spark-worker-{1,2} | 3 | Spark 分布式计算 |
-| 查询 | hive-server-{1,2}, hive-metastore | 3 | HiveServer2 + 元数据 |
+| 计算 | spark-master, spark-worker-1 | 2 | Spark 分布式计算 |
+| 查询 | hive-server-{1,2} | 2 | HiveServer2 (:10000), 共享 MySQL metastore |
 | 存储 | hbase-master, hbase-regionserver-{1,2} | 3 | HBase NoSQL |
-| 消息 | kafka-{1,2,3}, zookeeper-{1,2,3} | 6 | Kafka 集群 + ZK |
+| 消息 | kafka-{1,2} | 2 | KRaft 模式 (不依赖 ZK) |
+| 协调 | zookeeper-{1,2,3} | 3 | 仅供 HBase 用 |
 | 应用 | demo-backend | 1 | FastAPI 后端 (端口 8000) |
-| Web | frontend (静态文件) | (host) | nginx 8080 → 4 个 HTML 页面 |
 
 ### 1.2 后端服务
 
@@ -181,27 +181,43 @@ t_visit_record    : 100,000 行
 
 **文件**: `app/jobs/hive/{ddl.sql, views.sql, queries.sql}`
 
-> ⚠️ **当前状态**: HiveServer2 已部署但因 MySQL 8.0 + DataNucleus schema 兼容问题未启用，分析查询回退到 MySQL。
+**架构** (关键设计):
+- `mysql` 容器 (mysql:5.7) 同时承担业务库 + Hive Metastore
+- `hive-server-1` 首次启动跑 `schematool -dbType mysql -initSchema` (sentinel 文件幂等)
+- `hive-server-2` 等 hive-server-1 就绪后启动 (共享同一 metastore, HS2 多实例 HA)
+- 后端 `hive_service.py` 用 `pyhive` 直连 `hive-server-1:10000`，**无 fallback**
 
-### 5.1 DDL (4 张 Parquet 外表 + 2 张分区表)
+**为什么 MySQL 5.7 而不是 8.0**:
+- DataNucleus 4.2 (绑死在 Hive 3.1.3) 生成的 DDL 含 `DEFAULT CHARACTER SET charset_name`
+- MySQL 8.0 不再支持该语法 (hive/applications 一直未升级到 DataNucleus 5+)
+- 5.7 是 Apache 官方测试矩阵里最稳的版本
+
+### 5.1 DDL (4 张 Parquet 外表)
 
 ```sql
-CREATE EXTERNAL TABLE t_attraction (...) STORED AS PARQUET LOCATION 'hdfs:///scenic/cleaned/t_attraction';
-CREATE TABLE t_consumption PARTITIONED BY (year, month) ...;
-CREATE TABLE t_visit_record  PARTITIONED BY (year, month) ...;
+CREATE DATABASE IF NOT EXISTS scenic_ext;
+
+CREATE EXTERNAL TABLE scenic_ext.ext_t_attraction (
+    attraction_id   STRING,
+    attraction_name STRING,
+    attraction_type STRING,
+    location        STRING,
+    open_time       STRING
+) STORED AS PARQUET
+LOCATION 'hdfs://hadoop-namenode:9000/scenic/cleaned/t_attraction';
+-- 类似 ext_t_visitor, ext_t_consumption, ext_t_visit_record
 ```
 
 ### 5.2 视图 (views.sql)
 
-- `v_daily_summary`: 日游客/日消费/日笔数
-- `v_attraction_rank`: 景点热度排行
-- `v_visitor_profile`: 游客画像 (RFM)
+- `v_attraction_summary`: 景点总收入/总游客/平均时长
+- `v_daily_visits`: 每日游客量
+- `v_high_value_visitors`: 高消费游客 (≥1000)
+- `v_attraction_hourly_heat`: 景点时段热度
 
 ### 5.3 复杂查询 (queries.sql)
 
-- 各景点日均游客
-- 高消费游客 (top 10)
-- 工作日 vs 周末景点热度对比
+8 类查询：景点日均游客/高消费 Top20/时段热度/RANK 排行/年龄消费偏好/地区客单价/月度趋势/周末对比/消费 Top10 景点
 
 ---
 
@@ -332,9 +348,11 @@ CREATE TABLE t_visit_record  PARTITIONED BY (year, month) ...;
 **scenic_reviews**:
 - `{aid}_{ts}_{vid}` 评论 (cf: rating, comment)
 
-### 7.4 降级策略
+### 7.4 Kafka 不可用时的处理
 
-Kafka 不可用时自动降级直接写 HBase (`via: "hbase_fallback"`)，保证前端不会报错。
+Kafka 不可用时直接返回 `503 (Kafka publish failed)`。
+**不做降级直写 HBase** — 项目要求"真正跑起来"，Kafka 链路是端到端可观测的必经之路。
+故障通过 manage.html → 系统管理 → Kafka 卡片可见（绿色=正常），或 `docker compose logs kafka-1`。
 
 ---
 
@@ -471,7 +489,7 @@ docker exec spark-master bash -c "cd /opt/jobs && spark-submit --master spark://
 1. **PySpark → sklearn 双轨推理**: 训练在 spark-master (PySpark MLlib)，推理在 demo-backend (joblib 加载 .pkl)，毫秒级响应，无 PySpark 依赖
 2. **数据真实性修复**: 24h 时段分布按景点开放时间过滤，避免凌晨有游客的不真实数据
 3. **Kafka Consumer 后台线程**: 不阻塞 API 请求，独立线程消费 → 写 HBase
-4. **HBase 降级**: Kafka 不可用时直接写 HBase，保证前端不报错
+4. **Kafka 失败直接报错 503**: 不绕过 Kafka (项目要求链路真实可观测)
 5. **Sankey 去环**: FPGrowth 关联规则可能产生 A→B 和 B→A 的环，按权重排序时去除
 6. **多日预测因子合成**: 基础日均 × 趋势 × 星期因子 × 月因子 × 噪声，简单但有效
 7. **场景化预测设计**: 与景区业务深度结合的 ML (客流预测/智能推荐/路线规划/游客画像)，而非单纯的 6 特征输入
