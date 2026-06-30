@@ -278,9 +278,10 @@ def _op_sqoop_import(job: Job) -> None:
     # 验证 HDFS 文件
     hdfs_check = _run_in_container(config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "/scenic/sqoop/", timeout=10)
     job.log_lines.append(f"  HDFS /scenic/sqoop/:")
-    for line in (hdfs_check.stdout or "").splitlines():
+    hdfs_stdout = hdfs_check.get("stdout", "") if isinstance(hdfs_check, dict) else ""
+    for line in hdfs_stdout.splitlines():
         job.log_lines.append(f"    {line}")
-    job.result = {"tables_imported": hdfs_check.stdout.count("part-m-")}
+    job.result = {"tables_imported": hdfs_stdout.count("part-m-")}
 
 
 def _op_spark_clean(job: Job) -> None:
@@ -306,7 +307,10 @@ def _op_hive_ddl(job: Job) -> None:
 
         job.log_lines.append(f"  beeline -f /opt/jobs/hive/{sql_file} (HS2=hive-server-1:10000)")
 
-        beeline_cmd = f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/{sql_file}"
+        # ddl.sql 第 1 行是 CREATE DATABASE — 用 default 数据库连上来才能 CREATE
+        # views.sql 在 scenic_ext 内建视图 — 用 scenic_ext 数据库连
+        url_db = "default" if sql_file == "ddl.sql" else "scenic_ext"
+        beeline_cmd = f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/{url_db}' -n hive -p hive -f /opt/jobs/hive/{sql_file}"
         job.log_lines.append(f"  cmd: docker exec hive-server-1 bash -c '{beeline_cmd[:80]}...'")
         r = _run_in_container("hive-server-1", "bash", "-c", beeline_cmd, timeout=300)
         proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
