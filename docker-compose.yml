@@ -23,6 +23,7 @@ volumes:
   hbase-rs2-data:
   kafka1-data:
   kafka2-data:
+  hive-metastore-postgres-data:
   hive-server1-data:
   hive-server2-data:
   shared-data:
@@ -302,6 +303,175 @@ services:
       - bigdata-net
 
   # ========================================================
+  # Hive Metastore — PostgreSQL backend (DataNucleus 4.2 官方推荐)
+  # Hive 3.1.3 + DataNucleus + MySQL 8.0 的 CHARACTER SET 语法不兼容
+  # 改用 PostgreSQL: https://cwiki.apache.org/confluence/x/4z83Bg (官方推荐)
+  # ========================================================
+  hive-metastore-postgres:
+    image: postgres:15-alpine
+    container_name: hive-metastore-postgres
+    mem_limit: 512m
+    hostname: hive-metastore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hive_metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      TZ: Asia/Shanghai
+    volumes:
+      - hive-metastore-postgres-data:/var/lib/postgresql/data
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d hive_metastore"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ========================================================
+  # Hive Metastore (Thrift service, 端口 9083)
+  # 由 hive-server-1 容器兼任 (CDH 镜像已经包含 metastore 服务)
+  # ========================================================
+  hive-metastore:
+    image: smart-scenic/hive:custom
+    container_name: hive-metastore
+    mem_limit: 1024m
+    hostname: hive-metastore
+    restart: unless-stopped
+    build:
+      context: ./docker/hive
+      dockerfile: Dockerfile
+    depends_on:
+      hive-metastore-postgres:
+        condition: service_healthy
+      hadoop-namenode:
+        condition: service_started
+    environment:
+      HIVE_CONF_DIR: /opt/hive/conf
+      SERVICE_NAME: metastore
+      JAVA_HOME: /usr/local/openjdk-8
+      SKIP_SCHEMA_INIT: "true"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        export JAVA_HOME=/usr/local/openjdk-8
+        # 首次启动初始化 schema (idempotent by sentinel file)
+        if [ ! -f /opt/hive/conf/.metastore_initialized ]; then
+          echo "[hive-metastore] init schema (postgres backend)..."
+          /opt/hive/bin/schematool -dbType postgres -initSchema && \
+            touch /opt/hive/conf/.metastore_initialized && \
+            echo "[hive-metastore] schema initialized." || \
+            echo "[hive-metastore] schema already exists (skipping)."
+        fi
+        echo "[hive-metastore] starting metastore thrift service..."
+        exec /opt/hive/bin/hive --skiphadoopversion --service metastore
+    volumes:
+      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
+    ports:
+      - "${PORT_HIVE_METASTORE}:9083"
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9083 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  # ========================================================
+  # Hive Server (HS2, port 10000) — 2 个实例
+  # ========================================================
+  hive-server-1:
+    build:
+      context: ./docker/hive
+      dockerfile: Dockerfile
+    image: smart-scenic/hive:custom
+    container_name: hive-server-1
+    mem_limit: 1024m
+    hostname: hive-server-1
+    restart: unless-stopped
+    depends_on:
+      - hive-metastore-postgres
+      - hive-metastore
+      - hadoop-namenode
+    ports:
+      - "${PORT_HIVE}:10000"
+      - "${PORT_HIVE_WEB}:10002"
+    environment:
+      HIVE_CONF_DIR: /opt/hive/conf
+      SERVICE_NAME: hiveserver2
+      JAVA_HOME: /usr/local/openjdk-8
+      IS_RESUME: "true"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        export JAVA_HOME=/usr/local/openjdk-8
+        # wait for metastore thrift to be ready (avoid race on first connect)
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          if (echo > /dev/tcp/hive-metastore/9083) 2>/dev/null; then
+            echo "[hive-server-1] metastore ready, starting hiveserver2"
+            break
+          fi
+          echo "[hive-server-1] waiting for metastore... $$i"
+          sleep 5
+        done
+        exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
+    volumes:
+      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
+      - ./app/jobs:/opt/jobs:ro
+      - hive-server1-data:/opt/hive/conf
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/10000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  hive-server-2:
+    build:
+      context: ./docker/hive
+      dockerfile: Dockerfile
+    image: smart-scenic/hive:custom
+    container_name: hive-server-2
+    mem_limit: 1024m
+    hostname: hive-server-2
+    restart: unless-stopped
+    depends_on:
+      - hive-metastore-postgres
+      - hive-metastore
+      - hadoop-namenode
+    ports:
+      - "${PORT_HIVE_2}:10000"
+      - "${PORT_HIVE_2_WEB}:10002"
+    environment:
+      HIVE_CONF_DIR: /opt/hive/conf
+      SERVICE_NAME: hiveserver2
+      JAVA_HOME: /usr/local/openjdk-8
+      IS_RESUME: "true"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        export JAVA_HOME=/usr/local/openjdk-8
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          if (echo > /dev/tcp/hive-metastore/9083) 2>/dev/null; then
+            echo "[hive-server-2] metastore ready, starting hiveserver2"
+            break
+          fi
+          echo "[hive-server-2] waiting for metastore... $$i"
+          sleep 5
+        done
+        exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
+    volumes:
+      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
+      - hive-server2-data:/opt/hive/conf
+    networks:
+      - bigdata-net
+
   # ========================================================
   # Kafka Cluster (KRaft mode, latest 镜像)
   # 3.1.0 ZK mode 不在 docker hub 镜像源上，改用 KRaft 模式（latest）
@@ -449,84 +619,6 @@ services:
       - kafka-1
     networks:
       - bigdata-net
-
-  # ========================================================
-  # Hive Server with MySQL JDBC driver baked in (custom Dockerfile)
-  # ========================================================
-  hive-server-1:
-    build:
-      context: ./docker/hive
-      dockerfile: Dockerfile
-    image: smart-scenic/hive:custom
-    container_name: hive-server-1
-    mem_limit: 1024m
-    hostname: hive-server-1
-    restart: unless-stopped
-    depends_on:
-      - mysql
-      - hadoop-namenode
-    ports:
-      - "${PORT_HIVE}:10000"
-      - "${PORT_HIVE_WEB}:10002"
-    environment:
-      SERVICE_NAME: hiveserver2
-      HIVE_CONF_DIR: /opt/hive/conf
-      HADOOP_HOME: /opt/hadoop
-      SKIP_SCHEMA_INIT: "true"
-      IS_RESUME: "true"
-      JAVA_HOME: /usr/local/openjdk-8
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        export JAVA_HOME=/usr/local/openjdk-8
-        if [ ! -f /opt/hive/conf/.schema_initialized ]; then
-          /opt/hive/bin/schematool -dbType mysql -initSchema && touch /opt/hive/conf/.schema_initialized
-        fi
-        exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
-    volumes:
-      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
-      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
-      - ./app/jobs:/opt/jobs:ro
-      - hive-server1-data:/opt/hive/conf
-    networks:
-      - bigdata-net
-
-  hive-server-2:
-    build:
-      context: ./docker/hive
-      dockerfile: Dockerfile
-    image: smart-scenic/hive:custom
-    container_name: hive-server-2
-    mem_limit: 1024m
-    hostname: hive-server-2
-    restart: unless-stopped
-    depends_on:
-      - mysql
-      - hadoop-namenode
-      - hive-server-1
-    ports:
-      - "${PORT_HIVE_2}:10000"
-      - "${PORT_HIVE_2_WEB}:10002"
-    environment:
-      SERVICE_NAME: hiveserver2
-      HIVE_CONF_DIR: /opt/hive/conf
-      HADOOP_HOME: /opt/hadoop
-      SKIP_SCHEMA_INIT: "true"
-      IS_RESUME: "true"
-      JAVA_HOME: /usr/local/openjdk-8
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        export JAVA_HOME=/usr/local/openjdk-8
-        exec /opt/hive/bin/hive --skiphadoopversion --service hiveserver2
-    volumes:
-      - ./config/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
-      - ./config/hive/hive-env.sh:/opt/hive/conf/hive-env.sh:ro
-      - hive-server2-data:/opt/hive/conf
-    networks:
-      - bigdata-net
-
-
 
 
 

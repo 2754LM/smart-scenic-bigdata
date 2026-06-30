@@ -1,26 +1,58 @@
-<?xml version="1.0"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <configuration>
 
-    <!-- ====== Hive Metastore：使用远程 MySQL ====== -->
     <property>
         <name>javax.jdo.option.ConnectionURL</name>
-        <value>jdbc:mysql://mysql:3306/hive_metastore?createDatabaseIfNotExist=true&amp;useSSL=false&amp;allowPublicKeyRetrieval=true&amp;serverTimezone=Asia/Shanghai</value>
+        <value>jdbc:postgresql://hive-metastore-postgres:5432/hive_metastore?createDatabaseIfNotExist=true</value>
     </property>
     <property>
         <name>javax.jdo.option.ConnectionDriverName</name>
-        <value>com.mysql.cj.jdbc.Driver</value>
+        <value>org.postgresql.Driver</value>
     </property>
     <property>
         <name>javax.jdo.option.ConnectionUserName</name>
-        <value>root</value>
+        <value>hive</value>
     </property>
     <property>
         <name>javax.jdo.option.ConnectionPassword</name>
-        <value>root123</value>
+        <value>hive</value>
     </property>
 
-    <!-- ====== HiveServer2 配置 ====== -->
+    <property>
+        <name>datanucleus.connectionPool.maxPoolSize</name>
+        <value>4</value>
+    </property>
+    <property>
+        <name>datanucleus.connectionPool.maxIdle</name>
+        <value>2</value>
+    </property>
+    <property>
+        <name>datanucleus.schema.autoCreateAll</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>datanucleus.identifier.case</name>
+        <value>MixedCase</value>
+    </property>
+    <property>
+        <name>hive.metastore.schema.verification</name>
+        <value>false</value>
+    </property>
+
+    <property>
+        <name>hive.metastore.uris</name>
+        <value>thrift://hive-metastore:9083</value>
+    </property>
+    <property>
+        <name>hive.metastore.thrift.bind.host</name>
+        <value>0.0.0.0</value>
+    </property>
+    <property>
+        <name>hive.metastore.thrift.port</name>
+        <value>9083</value>
+    </property>
+
     <property>
         <name>hive.server2.thrift.bind.host</name>
         <value>0.0.0.0</value>
@@ -42,26 +74,21 @@
         <value>false</value>
     </property>
 
-    <!-- ====== 元数据仓库目录 ====== -->
-    <property>
-        <name>hive.metastore.warehouse.dir</name>
-        <value>/user/hive/warehouse</value>
-    </property>
-    <!-- 注释掉 metastore.uris，让 HiveServer2 直接连 MySQL（嵌入式 metastore）-->
-    <!--
-    <property>
-        <name>hive.metastore.uris</name>
-        <value>thrift://hive-server-1:9083</value>
-    </property>
-    -->
-
-    <!-- ====== 启用 Spark 作为执行引擎（可选） ====== -->
     <property>
         <name>hive.execution.engine</name>
         <value>mr</value>
     </property>
 
-    <!-- ====== 性能调优 ====== -->
+    <property>
+        <name>hive.metastore.warehouse.dir</name>
+        <value>hdfs://hadoop-namenode:9000/user/hive/warehouse</value>
+    </property>
+
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://hadoop-namenode:9000</value>
+    </property>
+
     <property>
         <name>hive.exec.reducers.bytes.per.reducer</name>
         <value>67108864</value>
@@ -79,28 +106,9 @@
         <value>nonstrict</value>
     </property>
 
-    <!-- ====== HDFS 配置（与 Hadoop 一致） ====== -->
     <property>
-        <name>fs.defaultFS</name>
-        <value>hdfs://hadoop-namenode:9000</value>
-    </property>
-
-    <!-- ====== 兼容设置 ====== -->
-    <property>
-        <name>hive.metastore.schema.verification</name>
+        <name>metastore.try.direct.sql.ddl</name>
         <value>false</value>
-    </property>
-    <property>
-        <name>datanucleus.schema.autoCreateAll</name>
-        <value>true</value>
-    </property>
-    <property>
-        <name>datanucleus.rdbms.useLegacyNativeCode</name>
-        <value>false</value>
-    </property>
-    <property>
-        <name>datanucleus.identifier.case</name>
-        <value>MixedCase</value>
     </property>
 
 </configuration>

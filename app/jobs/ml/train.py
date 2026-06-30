@@ -3,8 +3,10 @@ PySpark MLlib 训练 + sklearn joblib 模型输出 - 智能景区
 ====================================================
 训练在 Spark，推理用 sklearn（毫秒级、无 PySpark 依赖）。
 
-训练特征（6个）:
-  age, purchase_count, avg_amount, visit_count, avg_duration, unique_attractions
+训练特征（分类只用 3 个，避免数据泄漏；回归/聚类用 6 个）:
+  分类: age, avg_duration, unique_attractions  -> label is_repeat_visitor
+  回归: age, purchase_count, avg_amount, visit_count, avg_duration, unique_attractions -> total_amount
+  聚类: 同 6 维特征
 
 数据流:
   1. spark-submit train.py 训练并保存
@@ -59,7 +61,8 @@ HDFS_MODEL = "hdfs://hadoop-namenode:9000/scenic/models"
 SHARED_MODEL = "/shared/models"
 SKLEARN_OUT = "/shared/models/sklearn"   # demo-backend 用 joblib.load 这里
 
-FEATURE_COLS = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+FEATURE_COLS = ["age", "avg_duration", "unique_attractions"]
+CLASS_LABEL = "is_repeat_visitor"
 
 
 # ============== 1. 数据 ==============
@@ -79,9 +82,13 @@ df_visit = spark.read.parquet(f"{HDFS_CLEAN}/t_visit_record") \
 df_features = (df_visitor.join(df_cons, "visitor_id", "left")
                          .join(df_visit, "visitor_id", "left")
                          .fillna(0))
+# 用 visit_count 的中位数作为阈值，避免泄露 (purchase_count/avg_amount 直接决定 total_amount)
+# 中位数切分得到近似平衡的二分类 (54% high, 46% low)
+median_visit_count = df_features.approxQuantile("visit_count", [0.5], 0.01)[0]
 df_features = df_features.withColumn(
-    "high_value_label", F.when(F.col("total_amount") > 500, 1.0).otherwise(0.0))
+    CLASS_LABEL, F.when(F.col("visit_count") >= median_visit_count, 1.0).otherwise(0.0))
 print(f"    total rows: {df_features.count()}", flush=True)
+print(f"    median visit_count = {median_visit_count} (分类阈值)", flush=True)
 
 
 # ============== 2. 训练 Pipeline（用于预测时的转换） ==============
@@ -184,40 +191,48 @@ for i, c in enumerate(km_trained.clusterCenters()):
 
 
 # --- 分类 ---
-print("\n[4/5] classification ...", flush=True)
-df_clf = df_prep.filter(F.col("high_value_label").isin([0.0, 1.0]))
+# 分类只用 3 个非相关特征 + is_repeat_visitor label (避免数据泄漏)
+CLF_FEATURES = ["age", "avg_duration", "unique_attractions"]
+print("\n[4/5] classification (3 features, no leakage) ...", flush=True)
+df_clf = df_prep.filter(F.col(CLASS_LABEL).isin([0.0, 1.0]))
 train_c, test_c = df_clf.randomSplit([0.8, 0.2], seed=42)
-# 先准备训练/测试数据 (4 个模型共用)
-train_c_pdf = train_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
-test_c_pdf = test_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
-Xc_train = train_c_pdf[FEATURE_COLS].values
-yc_train = train_c_pdf["high_value_label"].astype(int).values
-Xc_test = test_c_pdf[FEATURE_COLS].values
-yc_test = test_c_pdf["high_value_label"].astype(int).values
+# 用 3 个特征重新构造 clf_features 列 (Spark 的 VectorAssembler 已经在 prep_model 用了 6 维)
+# 这里换成只装 3 维
+clf_assembler = VectorAssembler(inputCols=CLF_FEATURES, outputCol="clf_raw")
+clf_scaler = SparkScaler(inputCol="clf_raw", outputCol="clf_features", withMean=True, withStd=True)
+clf_prep = Pipeline(stages=[clf_assembler, clf_scaler]).fit(df_features)
+df_clf_prep = clf_prep.transform(df_features).filter(F.col(CLASS_LABEL).isin([0.0, 1.0]))
+train_clf_p, test_clf_p = df_clf_prep.randomSplit([0.8, 0.2], seed=42)
+train_c_pdf = train_clf_p.select(CLF_FEATURES + [CLASS_LABEL]).toPandas()
+test_c_pdf = test_clf_p.select(CLF_FEATURES + [CLASS_LABEL]).toPandas()
+Xc_train = train_c_pdf[CLF_FEATURES].values
+yc_train = train_c_pdf[CLASS_LABEL].astype(int).values
+Xc_test = test_c_pdf[CLF_FEATURES].values
+yc_test = test_c_pdf[CLASS_LABEL].astype(int).values
 
 # 4 个分类模型：RF / DecisionTree / GBT / LogisticRegression
 for name, spark_model, sk_factory in [
-    ("rf",      SparkRFC(featuresCol="features", labelCol="high_value_label", numTrees=20, maxDepth=10),
+    ("rf",      SparkRFC(featuresCol="clf_features", labelCol=CLASS_LABEL, numTrees=20, maxDepth=10),
      lambda: RandomForestClassifier(n_estimators=20, max_depth=10, random_state=42)),
-    ("dt",      SparkDTC(featuresCol="features", labelCol="high_value_label", maxDepth=10),
+    ("dt",      SparkDTC(featuresCol="clf_features", labelCol=CLASS_LABEL, maxDepth=10),
      lambda: DecisionTreeClassifier(max_depth=10, random_state=42)),
-    ("gbt",     SparkGBT(featuresCol="features", labelCol="high_value_label", maxIter=20, maxDepth=5),
+    ("gbt",     SparkGBT(featuresCol="clf_features", labelCol=CLASS_LABEL, maxIter=20, maxDepth=5),
      lambda: GradientBoostingClassifier(n_estimators=20, max_depth=5, random_state=42)),
-    ("lr",      SparkLogReg(featuresCol="features", labelCol="high_value_label", maxIter=50, regParam=0.01),
+    ("lr",      SparkLogReg(featuresCol="clf_features", labelCol=CLASS_LABEL, maxIter=50, regParam=0.01),
      lambda: LogisticRegression(max_iter=50, C=1.0, random_state=42)),
 ]:
     try:
-        trained = spark_model.fit(train_c)
-        pred = trained.transform(test_c)
-        acc = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="accuracy").evaluate(pred)
-        f1 = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="f1").evaluate(pred)
+        trained = spark_model.fit(train_clf_p)
+        pred = trained.transform(test_clf_p)
+        acc = MulticlassClassificationEvaluator(labelCol=CLASS_LABEL, metricName="accuracy").evaluate(pred)
+        f1 = MulticlassClassificationEvaluator(labelCol=CLASS_LABEL, metricName="f1").evaluate(pred)
         try:
-            auc = BinaryClassificationEvaluator(labelCol="high_value_label", metricName="areaUnderROC").evaluate(pred)
+            auc = BinaryClassificationEvaluator(labelCol=CLASS_LABEL, metricName="areaUnderROC").evaluate(pred)
         except Exception:
             auc = 0.0
         print(f"    {name:4s}  acc={acc:6.4f}  f1={f1:6.4f}  auc={auc:6.4f}", flush=True)
 
-        # 重建 sklearn 模型
+        # 重建 sklearn 模型 (注意：rebuild 用的是 spark 训练后的 df_clf_prep，不是 train_c)
         sk_clf = sk_factory().fit(Xc_train, yc_train)
         joblib.dump(sk_clf, f"{SKLEARN_OUT}/classification_{name}.pkl")
         print(f"    saved {SKLEARN_OUT}/classification_{name}.pkl", flush=True)
@@ -227,6 +242,8 @@ for name, spark_model, sk_factory in [
             "accuracy": float(acc),
             "f1": float(f1),
             "auc": float(auc),
+            "features": CLF_FEATURES,
+            "label": CLASS_LABEL,
         })
     except Exception as e:
         print(f"    {name:4s}  FAILED: {e}", flush=True)

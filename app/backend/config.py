@@ -67,9 +67,9 @@ SPARK_CONTAINER = os.getenv("SPARK_CONTAINER", "spark-master")
 # ----------------------------------------------------------------------
 # Hive
 # ----------------------------------------------------------------------
-HIVE_HOST = os.getenv("HIVE_HOST", "localhost")
-HIVE_PORT = int(os.getenv("HIVE_PORT", "11010"))
-HIVE_DB = os.getenv("HIVE_DB", "scenic_ext")
+HIVE_HOST = os.getenv("HIVE_HOST", "hive-server-1")
+HIVE_PORT = int(os.getenv("HIVE_PORT", "10000"))
+HIVE_DB = os.getenv("HIVE_DB", "scenic")
 
 # ----------------------------------------------------------------------
 # ML models

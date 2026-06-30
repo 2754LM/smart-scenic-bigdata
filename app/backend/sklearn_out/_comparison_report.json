@@ -1,0 +1,94 @@
+{
+  "regression": [
+    {
+      "model": "linear",
+      "rmse": 320.89,
+      "r2": 0.9694
+    },
+    {
+      "model": "lasso",
+      "rmse": 320.91,
+      "r2": 0.9694
+    },
+    {
+      "model": "ridge",
+      "rmse": 320.92,
+      "r2": 0.9694
+    },
+    {
+      "model": "rf",
+      "rmse": 719.38,
+      "r2": 0.8463
+    }
+  ],
+  "clustering": [
+    {
+      "model": "kmeans",
+      "silhouette": 0.3644
+    }
+  ],
+  "classification": [
+    {
+      "model": "rf",
+      "cv_acc_mean": 0.7769339364162386,
+      "cv_acc_std": 0.00498130525936273,
+      "cv_f1_mean": 0.7957535630623942,
+      "cv_auc_mean": 0.8649707609889481,
+      "test_acc": 0.7833843017329256,
+      "test_f1": 0.7913598429062346,
+      "test_auc": 0.8750400827891791,
+      "accuracy": 0.7833843017329256,
+      "f1": 0.7913598429062346,
+      "auc": 0.8750400827891791
+    },
+    {
+      "model": "dt",
+      "cv_acc_mean": 0.7720835771360992,
+      "cv_acc_std": 0.009130928393801226,
+      "cv_f1_mean": 0.7968760693642976,
+      "cv_auc_mean": 0.8540140993901628,
+      "test_acc": 0.7762487257900101,
+      "test_f1": 0.7888407888407888,
+      "test_auc": 0.8653796100413114,
+      "accuracy": 0.7762487257900101,
+      "f1": 0.7888407888407888,
+      "auc": 0.8653796100413114
+    },
+    {
+      "model": "gbt",
+      "cv_acc_mean": 0.7822852136331411,
+      "cv_acc_std": 0.006686875354992166,
+      "cv_f1_mean": 0.8028724562070945,
+      "cv_auc_mean": 0.8694362900521373,
+      "test_acc": 0.7813455657492355,
+      "test_f1": 0.7932530120481929,
+      "test_auc": 0.8763060742603945,
+      "accuracy": 0.7813455657492355,
+      "f1": 0.7932530120481929,
+      "auc": 0.8763060742603945
+    },
+    {
+      "model": "lr",
+      "cv_acc_mean": 0.7778045831824077,
+      "cv_acc_std": 0.008435881931591815,
+      "cv_f1_mean": 0.7818975984910141,
+      "cv_auc_mean": 0.8632436297933344,
+      "test_acc": 0.7854230377166157,
+      "test_f1": 0.7776016904384575,
+      "test_auc": 0.8753008811966951,
+      "accuracy": 0.7854230377166157,
+      "f1": 0.7776016904384575,
+      "auc": 0.8753008811966951
+    }
+  ],
+  "classification_task": {
+    "label": "is_repeat_visitor (visit_count >= 5 中位数分割)",
+    "features": [
+      "age",
+      "avg_duration",
+      "unique_attractions"
+    ],
+    "note": "第 1 次修复: 去掉 purchase_count/avg_amount (因为 total_amount = purchase_count × avg_amount). 仍泄漏. 第 2 次修复: 也去掉 visit_count (因为标签 = visit_count >= 阈值). 现在用 3 个真正独立的特征.",
+    "fix": "用 3 个行为特征 (age, avg_duration, unique_attractions), 标签为是否高频回头客"
+  }
+}

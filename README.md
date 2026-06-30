@@ -1,11 +1,11 @@
 ﻿# 智能景区大数据平台 (Smart Scenic BigData Platform)
 
 > 选题十八：智能景区管理系统 6.2-6.5 评分点
-> 真分布式大数据集群 (17 容器) + 完整业务系统 (5 页前端 + 49 REST API + Kafka 实时流)
+> 真分布式大数据集群 (19 容器) + 完整业务系统 (5 页前端 + 49 REST API + Kafka 实时流 + Hive 数仓)
 > 一键部署，10 分钟跑通
 
-本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**17 个容器**），完整实现作业 6.2-6.5 全部要求：
-- **6.2 平台搭建** - 17 容器一键部署（HBase 自动 init meta 表，业务表自动建）
+本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**19 个容器**），完整实现作业 6.2-6.5 全部要求：
+- **6.2 平台搭建** - 19 容器一键部署（HBase 自动 init meta 表，业务表自动建；Hive Metastore 用 PostgreSQL 兼容 Hive 3.1.3 + DataNucleus）
 - **6.3 数据采集** - Sqoop MySQL→HDFS + Kafka 实时流
 - **6.4 数据分析** - Spark 清洗 + Hive 仓库 + 4 回归 + 1 聚类 + 4 分类 (无数据泄漏)
 - **6.5 可视化** - 5 页 Web 前端（含独立 Kafka/HBase 实时流页 + 真实 vs 预测折线）
@@ -33,7 +33,7 @@
 
 ## 一、快速开始（10 分钟跑通）
 
-### 1.1 启动大数据平台（17 容器）
+### 1.1 启动大数据平台（19 容器）
 
 ```bat
 cd smart-scenic-bigdata
@@ -137,12 +137,12 @@ scripts\install-deps.bat      REM 创建 venv + pip install -r requirements.txt
 smart-scenic-bigdata/
 ├── README.md                  ← 本文件（主文档）
 ├── LICENSE                    MIT
-├── docker-compose.yml         17 容器编排
+├── docker-compose.yml         19 容器编排
 ├── .env                       端口/密码/镜像版本
 ├── .gitattributes             LF 行尾强制
 │
 ├── docker/                    自定义镜像的 Dockerfile
-│   ├── hive/                  FROM apache/hive + MySQL JDBC
+│   ├── hive/                  FROM apache/hive:3.1.3 + PostgreSQL JDBC (DataNucleus 兼容)
 │   └── hadoop/                FROM apache/hadoop + JDK + Sqoop
 │
 ├── config/                    各组件运行时配置（bind mount）
@@ -161,7 +161,7 @@ smart-scenic-bigdata/
 │   └── jobs/                  Spark / Hive / PySpark 训练脚本
 │
 ├── scripts/                   运维脚本（5 个，Windows .bat）
-│   ├── start.bat              1. 一键启动 17 容器（含 HBase 自动 init）
+│   ├── start.bat              1. 一键启动 19 容器（含 HBase 自动 init + Hive Metastore 初始化）
 │   ├── stop.bat               2. 停止所有容器（数据保留）
 │   ├── reset.bat              3. 完全重置（清空所有数据，会询问 yes）
 │   ├── install-deps.bat       4. 安装 Python venv + 依赖（仅 IDE 用）
@@ -180,24 +180,26 @@ smart-scenic-bigdata/
 
 ---
 
-## 四、17 个容器使用情况
+## 四、19 个容器使用情况
 
 | 容器 | 数量 | 实际用途 | 镜像 | 端口 |
 |------|------|---------|------|------|
-| mysql | 1 | 业务库 (scenic) + Hive Metastore | mysql:8.0 | 13306 |
+| mysql | 1 | 业务库 (scenic) 4 张中文表 | mysql:8.0 | 13306 |
 | zookeeper-1/2/3 | 3 | HBase 协调 | zookeeper:3.9 | 12181 |
 | hadoop-namenode | 1 | HDFS + Sqoop + YARN（自定义镜像 + JDK 1.8 + Sqoop）| smart-scenic/hadoop:custom | 19870/18088/19000 |
 | hadoop-datanode-1/2 | 2 | HDFS 副本 | apache/hadoop:3.3.6 | - |
 | hbase-master | 1 | HBase Master | harisekhon/hbase:latest | 11610 |
 | hbase-regionserver-1/2 | 2 | HBase Region 服务 | harisekhon/hbase:latest | 11620-11630 |
-| kafka-1/2/3 | 3 | 消息队列（KRaft 模式，**不依赖 ZK**）| apache/kafka:latest | 19092/19095 |
+| kafka-1/2 | 2 | 消息队列（KRaft 模式，**不依赖 ZK**）| apache/kafka:latest | 19092/19095 |
 | spark-master | 1 | PySpark 调度 | apache/spark:3.4.1 | 18080 |
 | spark-worker-1 | 1 | PySpark 执行 | apache/spark:3.4.1 | - |
-| hive-server-1/2 | 2 | 数仓查询（暂走 MySQL 兜底，详见 Q8）| smart-scenic/hive:custom | 11010/11011/11012/11013 |
+| hive-metastore-postgres | 1 | Hive 元数据库（DataNucleus 4.2 + MySQL 8.0 不兼容 → 切 PostgreSQL）| postgres:15-alpine | - |
+| hive-metastore | 1 | Hive 元数据 Thrift 服务 (端口 9083) | smart-scenic/hive:custom | 11083 |
+| hive-server-1/2 | 2 | HiveServer2 多实例 (端口 10000) | smart-scenic/hive:custom | 11010/11011/11012/11013 |
 | demo-backend | 1 | FastAPI 后端 (49 endpoints) | python:3.10-slim | 8000 |
 | (auto-init) | - | HBase 业务表 scenic_realtime / scenic_reviews | (start.bat 一键创建) | - |
 
-**结论：17 个容器全部有实际业务代码使用，0 个空跑。**
+**结论：19 个容器全部有实际业务代码使用，0 个空跑。**
 
 ---
 
@@ -231,7 +233,7 @@ smart-scenic-bigdata/
 ### 5.3 系统管理面板
 
 打开 `manage.html` → **系统管理** tab，一站式管理：
-- 17 容器状态（按存储/协调/计算/NoSQL/消息/数仓/应用分组）
+- 19 容器状态（按存储/协调/计算/NoSQL/消息/数仓/应用分组）
 - 已训练 PySpark 模型列表
 - 4 张 MySQL 表 + 4 个 CSV 文件状态
 - HDFS 分区目录
@@ -407,19 +409,26 @@ scripts\reset.bat       REM 输入 yes 确认，清空所有数据卷
 scripts\start.bat
 ```
 
-### Q8: Hive 实际未工作
-**现状**：Hive Server 镜像能起，但 Hive Metastore 对 MySQL 8.0 + DataNucleus 1.x 不兼容（CREATE TABLE 语法问题）。
+### Q8: Hive 数仓架构（PostgreSQL Metastore）
 
-**替代方案**：所有分析查询 (`hive_service.py`) 走 **MySQL 直接查询**，结果相同。对于本项目 4 张表（10 行 + 1 万 + 10 万 + 10 万）性能完全够用。
+**当前架构**:
+- `hive-metastore-postgres` (postgres:15-alpine) — Hive 元数据库（**替代 MySQL 8.0**，避开 DataNucleus 4.2 的 `CHARACTER SET` 不兼容问题）
+- `hive-metastore` (Thrift 9083) — 启动时自动 `schematool -dbType postgres -initSchema`
+- `hive-server-1/2` (HiveServer2 :10000) — 2 实例，连接到 Thrift metastore
+- 后端 `hive_service.py` 用 `pyhive` 真实查询 Hive（不再是 MySQL 兜底）
+- 数据流：MySQL → Sqoop → HDFS Parquet → `hive -f ddl.sql` 注册外表 → 后端通过 HS2 查询
 
-如需修复 Hive：升级 DataNucleus 到 5.x + 修改 schema 脚本兼容性。
+**为什么用 PostgreSQL 而不是 MySQL 作为 metastore**:
+- DataNucleus 4.2（绑死在 Hive 3.1.3）对 MySQL 8.0 生成的 DDL 用 `CHARACTER SET charset_name` 语法被 MySQL 8.0 拒绝
+- Apache 官方在 `cwiki.apache.org/confluence/x/4z83Bg` 明确推荐 Hive 3.x 用 PostgreSQL ≥ 9.1.13 作为 metastore
+- `big-data-europe/docker-hive`（Docker Hub 上 Star 最多的 Hive 镜像）也是这个方案
 
 ### Q9: 演示流程（演示用）
 
 ```bat
 scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 打开浏览器：
-  1. http://localhost:8080/manage.html → 系统管理 tab → 看 17 容器 ● 全部绿色
+  1. http://localhost:8080/manage.html → 系统管理 tab → 看 19 容器 ● 全部绿色
   2. 点 ⚡ 一键初始化 → 5-10 分钟后看 4 个已训练模型 (regression / classification)
   3. 切到 http://localhost:8080/predict.html → 选场景 → 输入特征 → 看预测结果
   4. 切到 http://localhost:8080/realtime.html → 点 ⚡ 触发任务 → 验证 HBase 落库
@@ -468,7 +477,7 @@ scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 
 | 作业要求 | 本项目实现 | 状态 |
 |---------|----------|------|
-| 6.2 平台搭建 | 17 容器一键部署 (脚本化) | ✅ |
+| 6.2 平台搭建 | 19 容器一键部署 (脚本化) | ✅ |
 | 6.3 数据采集 | Sqoop MySQL→HDFS + Kafka 实时流 (HBase 落库) | ✅ |
 | 6.4 数据分析 | Spark 清洗 + **MySQL 兜底** + 4 回归 + 1 聚类 + 4 分类 | ✅ |
 | 6.5 可视化 | 5 页前端 (含独立实时流页 + 真实 vs 预测折线) | ✅ |
@@ -484,7 +493,7 @@ scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 
 | 脚本 | 用途 | 何时用 |
 |------|------|--------|
-| `start.bat` | 一键启动 17 容器（含 HBase 自动 init 表） | 每天开机第一次 |
+| `start.bat` | 一键启动 19 容器（含 HBase 自动 init + Hive Metastore init） | 每天开机第一次 |
 | `stop.bat` | 停止所有容器（数据保留在 volume） | 不用时 |
 | `reset.bat` | 完全重置（清空所有数据卷，会询问 yes） | 重新开始 |
 | `install-deps.bat` | 创建本地 venv + pip install（仅 IDE 用） | 用编辑器写代码时 |
@@ -492,7 +501,7 @@ scripts\test-e2e.bat       REM 先跑 22 项验证（应该全 PASS）
 
 **典型工作流**：
 ```bat
-scripts\start.bat      REM 第一次：启动 17 容器
+scripts\start.bat      REM 第一次：启动 19 容器
 scripts\test-e2e.bat   REM 验证：22 项应该全 PASS
 REM 浏览器 http://localhost:8080 玩耍 (5 页 + 49 API)
 scripts\stop.bat       REM 关闭

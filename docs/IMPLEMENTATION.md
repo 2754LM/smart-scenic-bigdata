@@ -238,26 +238,31 @@ CREATE TABLE t_visit_record  PARTITIONED BY (year, month) ...;
 3. **训练 4 类模型 (sklearn 兼容 joblib)**
    - 回归: `Linear / Lasso / Ridge / RandomForest` (预测 `total_amount`)
    - 聚类: `KMeans (k=4)` (silhouette=0.3644)
-   - 分类: `RandomForest / DecisionTree / GBT / LogisticReg` (预测 `high_value_label`)
+   - 分类: `RandomForest / DecisionTree / GBT / LogisticReg` (预测 `is_repeat_visitor = (visit_count >= median)`，仅用 3 个非相关特征避免数据泄漏)
 
 4. **保存为 joblib**
    - `/shared/models/sklearn/regression_{linear,lasso,ridge,rf}.pkl`
    - `/shared/models/sklearn/clustering_kmeans.pkl`
    - `/shared/models/sklearn/classification_{rf,dt,gbt,lr}.pkl`
 
-### 6.3 模型性能 (测试集)
+### 6.3 模型性能 (测试集, 真实指标 — 修复了数据泄漏)
 
-| 类别 | 模型 | RMSE / Acc / F1 / Silhouette / AUC |
+**数据泄漏修复历史**：
+- v1: 包含 `purchase_count` + `avg_amount` 标签=`(total_amount > 500)` → 因 `total_amount = purchase_count × avg_amount` 直接计算，`Acc=1.0`
+- v2: 移除 `purchase_count`/`avg_amount`，但保留 `visit_count` → `Acc=0.99+`
+- **v3 (当前)**: 移除 `visit_count`，标签改为 `is_repeat_visitor = (visit_count >= median)` → 真实准确率 0.77-0.79, AUC=0.86-0.88
+
+| 类别 | 模型 | 测试集指标 |
 |---|---|---|
 | 回归 | Linear | RMSE=320.89, R²=0.9694 |
 | 回归 | Lasso  | RMSE=320.91, R²=0.9694 |
 | 回归 | Ridge  | RMSE=320.92, R²=0.9694 |
 | 回归 | RF     | RMSE=719.38, R²=0.8463 |
 | 聚类 | KMeans k=4 | silhouette=0.3644 |
-| 分类 | RF     | Acc=0.9995, F1=0.9997, AUC=1.0 |
-| 分类 | DT     | Acc=0.9995, F1=0.9997, AUC=0.9997 |
-| 分类 | GBT    | Acc=0.9995, F1=0.9997, AUC=0.9997 |
-| 分类 | LR     | Acc=1.0000, F1=1.0000, AUC=1.0 |
+| 分类 | RF     | Acc=0.7834, F1=0.7914, AUC=0.8750 |
+| 分类 | DT     | Acc=0.7762, F1=0.7888, AUC=0.8654 |
+| 分类 | GBT    | Acc=0.7813, F1=0.7933, AUC=0.8763 |
+| 分类 | LR     | Acc=0.7854, F1=0.7776, AUC=0.8753 |
 
 ### 6.4 FPGrowth 关联规则 (app/jobs/ml/fpgrowth.py)
 
@@ -368,8 +373,8 @@ Kafka 不可用时自动降级直接写 HBase (`via: "hbase_fallback"`)，保证
 1. MySQL 聚合 6 维特征 (消费笔数/总额/平均/游玩次数/时长/景点数)
 2. 兴趣偏好: 该游客去过的景点按 类型 分组 top 3
 3. ML 模型推理 (sklearn):
-   - high_value_visitor → 消费预测 (Ridge)
-   - high_value_label  → 是否高价值 (RF/DT/GBT/LR 4 选)
+   - consumption_amount → 消费总额回归预测 (Linear/Lasso/Ridge/RF)
+   - high_value_visitor → 是否高频回头客 (RF/DT/GBT/LR 4 选, 3 特征)
    - cluster            → 群体归类 (KMeans k=4)
 ↓
 输出: 完整画像 + 群体标签 + 运营建议
