@@ -354,15 +354,17 @@ async function loadClassificationTable() {
     const nameMap = { rf: 'RandomForest', dt: 'DecisionTree', gbt: 'GBT', lr: 'LogisticReg' };
     el.innerHTML = `
       <div style="color:#a855f7; font-size:12px; margin-bottom:4px">🎯 分类模型对比</div>
-      <div style="color:#9ca3af; font-size:10px; margin-bottom:6px">预测目标: <span class="text-accent">是否高价值游客 (消费>500)</span></div>
+      <div style="color:#9ca3af; font-size:10px; margin-bottom:4px">预测目标: <span class="text-accent">是否高频回头客 (visit_count >= 中位数)</span></div>
+      <div style="color:#9ca3af; font-size:10px; margin-bottom:6px">特征: age, avg_duration, unique_attractions (3 维, 无数据泄漏)</div>
       <table>
-        <thead><tr><th>模型</th><th>Acc</th><th>F1</th><th>AUC</th></tr></thead>
+        <thead><tr><th>模型</th><th>CV5 Acc</th><th>Test Acc</th><th>Test F1</th><th>Test AUC</th></tr></thead>
         <tbody>
           ${rows.map(x => `<tr>
             <td>${escapeHtml(nameMap[x.model] || x.model)}</td>
-            <td><span class="text-accent">${fmt(x.accuracy, 4)}</span></td>
-            <td>${fmt(x.f1, 4)}</td>
-            <td>${fmt(x.auc || 0, 4)}</td>
+            <td>${fmt(x.cv_acc_mean || x.accuracy, 4)}${x.cv_acc_std ? '±' + x.cv_acc_std.toFixed(3) : ''}</td>
+            <td><span class="text-accent">${fmt(x.test_acc || x.accuracy, 4)}</span></td>
+            <td>${fmt(x.test_f1 || x.f1, 4)}</td>
+            <td>${fmt(x.test_auc || x.auc || 0, 4)}</td>
           </tr>`).join('')}
         </tbody>
       </table>

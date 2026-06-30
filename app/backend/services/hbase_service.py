@@ -279,6 +279,33 @@ def attraction_stat(scenic_id: int) -> Optional[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------
+# 一键初始化: 创建业务表 + 注入 demo 数据
+# 由 demo-backend 的 on_startup 钩子调用, 保证 HBase 可用即可见
+# ----------------------------------------------------------------------
+REQUIRED_TABLES = ["scenic_realtime", "scenic_reviews"]
+
+
+def init_tables() -> Dict[str, Any]:
+    """确保 2 张业务表存在；不存在则创建。幂等。"""
+    if not _docker_available():
+        return {"status": "skipped", "reason": "docker not available"}
+    created = []
+    exists = []
+    for table in REQUIRED_TABLES:
+        out = hbase_shell(f'exists "{table}"')
+        if "does exist" in out or "TableNotDisabledException" in out:
+            exists.append(table)
+        else:
+            # 不存在则创建 (1 个列族 cf)
+            create_out = hbase_shell(f'create "{table}", "cf"')
+            if "ERROR" not in create_out:
+                created.append(table)
+            else:
+                return {"status": "error", "table": table, "error": create_out[:200]}
+    return {"status": "ok", "created": created, "exists": exists}
+
+
+# ----------------------------------------------------------------------
 # Demo seeding: write a few rows so the page has something to show
 # when HBase is empty.
 # ----------------------------------------------------------------------

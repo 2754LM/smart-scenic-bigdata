@@ -41,6 +41,22 @@ if [ -x /opt/install-sqoop.sh ]; then
   nohup bash /opt/install-sqoop.sh > /var/log/hadoop/sqoop-install.log 2>&1 &
 fi
 
+# ==== HBase 预创建 /hbase 目录 ====
+# 原因: HBase master 启动时调 MasterFileSystem.createInitialFileSystemLayout() 会在
+#       HDFS 上创建 /hbase, 但如果 datanode 还没 join, setSafeMode() 会失败导致 master
+#       进入 abort 循环. 显式预先 mkdir + chmod 777 可彻底规避.
+echo "=== Pre-creating HDFS /hbase directory (waits for safe-mode off) ==="
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if hdfs dfsadmin -safemode wait 2>/dev/null; then
+    if hdfs dfs -mkdir -p /hbase 2>/dev/null && hdfs dfs -chmod 777 /hbase 2>/dev/null; then
+      echo "=== /hbase ready (attempt $i) ==="
+      break
+    fi
+  fi
+  echo "=== HDFS not ready, retry $i in 6s ==="
+  sleep 6
+done
+
 # Keep PID 1 alive (NOT exec - we want to keep supervising)
 echo "=== Starter finished, namenode PID=$NAMENODE_PID ==="
 echo "=== Following namenode.log ==="

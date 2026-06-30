@@ -60,7 +60,14 @@ app.include_router(admin.router)
 
 @app.on_event("startup")
 def on_startup() -> None:
-    """Best-effort seed of HBase realtime table so front-end has data."""
+    """Best-effort init of HBase tables + seed so front-end has data."""
+    # 1. 幂等建表 (scenic_realtime, scenic_reviews)
+    try:
+        result = hbase_svc.init_tables()
+        log.info("HBase init tables: %s", result)
+    except Exception as e:
+        log.warning("HBase init tables skipped: %s", e)
+    # 2. 若 scenic_realtime 为空，注入 demo 行
     try:
         if hbase_svc.seed_if_empty():
             log.info("HBase scenic_realtime table seeded with demo rows")

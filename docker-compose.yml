@@ -230,6 +230,8 @@ services:
     mem_limit: 1024m
     hostname: hbase-master
     restart: unless-stopped
+    # hadoop-namenode 的 starter.sh 已经在 HDFS 上预先创建了 /hbase 目录,
+    # 避免 master 启动时调 createInitialFileSystemLayout 因 HDFS 没准备好而 abort.
     command: ["master"]
     depends_on:
       - zookeeper-1
@@ -244,6 +246,7 @@ services:
     environment:
       HBASE_MANAGES_ZK: "false"
       JAVA_HOME: /usr/lib/jvm/java-1.8-openjdk
+      HBASE_MANAGES_ZK_USER: "hbase"
       HBASE_MASTER_OPTS: "-Xmx1024m"
     volumes:
       - ./config/hbase/hbase-site.xml:/hbase/conf/hbase-site.xml:ro
@@ -251,6 +254,12 @@ services:
       - hbase-master-data:/hbase-data
     networks:
       - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'status' | hbase shell -n 2>&1 | grep -q '1 active master' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
 
   hbase-regionserver-1:
     image: harisekhon/hbase:${HBASE_VERSION}

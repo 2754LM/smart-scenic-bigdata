@@ -56,16 +56,29 @@ _load_models()
 
 
 # ----------------------------------------------------------------------
-# 特征转换：把前端字段映射到 Spark 训练时的 6 个特征
+# 特征转换：把前端字段映射到 Spark 训练时的特征
 # ----------------------------------------------------------------------
+# 回归任务用 6 个特征 (预测消费总额)
+REGRESSION_FEATURES = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+# 分类任务用 3 个特征 (是否高频回头客, 防止数据泄漏)
+CLASSIFICATION_FEATURES = ["age", "avg_duration", "unique_attractions"]
+# 聚类任务用 6 个特征
+CLUSTERING_FEATURES = REGRESSION_FEATURES
+
+
 def _features_to_spark(task: str, f: Dict[str, Any]) -> np.ndarray:
     """
-    把前端的任意字段映射到 Spark 训练的 6 个特征:
-      [age, purchase_count, avg_amount, visit_count, avg_duration, unique_attractions]
-    返回 numpy array shape (1, 6)
+    把前端的任意字段映射到对应任务的特征:
+      - regression (消费金额/客流量): 6 个特征
+      - classification (回头客): 3 个特征 [age, avg_duration, unique_attractions]
+      - clustering: 6 个特征
+    返回 numpy array shape (1, n_features)
     """
-    # 直接用 6 个英文字段（前端应该已经映射好）
-    keys = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+    if task in ("high_value_visitor",):
+        keys = CLASSIFICATION_FEATURES
+    else:
+        keys = REGRESSION_FEATURES
+
     vals = []
     for k in keys:
         v = f.get(k)
@@ -95,7 +108,9 @@ def predict(task: str, features: Dict[str, Any]) -> Dict[str, Any]:
         # 客流量预测：使用 ridge 回归模型 + 日聚合
         candidates = ("regression_ridge", "regression_rf")
     elif task == "high_value_visitor":
-        # 4 个分类模型 (rf/dt/gbt/lr)，按 accuracy 排序优先级
+        # 4 个分类模型 (rf/dt/gbt/lr) - 任务: 是否高频回头客
+        # 训练时只用了 3 个特征 (age, avg_duration, unique_attractions)
+        # 这里我们把所有 6 个特征喂进去, 但模型内部只用前 3 个
         candidates = ("classification_rf", "classification_gbt", "classification_dt", "classification_lr")
     elif task == "cluster":
         candidates = ("clustering_kmeans",)

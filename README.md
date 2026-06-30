@@ -1,14 +1,14 @@
 ﻿# 智能景区大数据平台 (Smart Scenic BigData Platform)
 
 > 选题十八：智能景区管理系统 6.2-6.5 评分点
-> 真分布式大数据平台 + 完整业务系统 4 页 Web 前端 + 30+ REST API + Kafka 实时流
+> 真分布式大数据平台 + 完整业务系统 5 页 Web 前端 + 40+ REST API + Kafka 实时流
 > 一键部署，10 分钟跑通
 
 本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**17 个容器**），完整实现作业 6.2-6.5 全部要求：
-- **6.2 平台搭建** - 17 容器一键部署
+- **6.2 平台搭建** - 17 容器一键部署 (HBase 自动 init meta 表)
 - **6.3 数据采集** - Sqoop MySQL→HDFS + Kafka 实时流
-- **6.4 数据分析** - Spark SQL + Hive 仓库 + 4 回归 + 1 聚类 + 2 分类模型
-- **6.5 可视化** - 4 页 Web 前端 + Kafka 实时推送
+- **6.4 数据分析** - Spark SQL + Hive 仓库 + 4 回归 + 1 聚类 + 4 分类 (无数据泄漏)
+- **6.5 可视化** - 5 页 Web 前端 (含 1 个独立实时流页面) + Kafka 实时推送
 
 ---
 
@@ -54,17 +54,18 @@ copy "D:\选题与数据相关资料\数据集\Topic 18\*.csv" data\raw_data\
 ### 1.3 启动 Web 应用
 
 ```bat
-scripts\scripts\start-app.bat      REM 启动 Web（自动装依赖 + 智能双轨）
+scripts\start-app.bat      REM 启动 Web（自动装依赖 + 智能双轨）
 ```
 
 启动后浏览器打开：
 
 | 页面 | URL | 内容 |
 |------|-----|------|
-| **总览** | http://localhost:8080 | 8 KPI + 7 ECharts 图表 |
-| **数据分析** | http://localhost:8080/analysis.html | FPGrowth 关联规则 |
-| **机器学习预测** | http://localhost:8080/predict.html | 回归/分类/聚类 |
-| **管理 + Kafka 实时流** | http://localhost:8080/manage.html | 5 tab + 系统管理 |
+| **总览** | http://localhost:8080 | 8 KPI + 4 ML 预测 + 7 ECharts 图表 |
+| **数据分析** | http://localhost:8080/analysis.html | 6 图表 + FPGrowth Sankey |
+| **机器学习预测** | http://localhost:8080/predict.html | 4 场景化卡 + 真实 vs 预测折线 |
+| **⚡ 实时流** | http://localhost:8080/realtime.html | 数据流图 + 触发任务 + HBase 验证 |
+| **业务管理** | http://localhost:8080/manage.html | 景点/游客/消费/游玩 + 系统管理 |
 | **API 文档** | http://localhost:8000/docs | Swagger UI |
 | **引擎状态** | http://localhost:8000/api/predict/_engine | PySpark vs sklearn |
 
@@ -148,8 +149,8 @@ smart-scenic-bigdata/
 │   └── 01-init-business.sql   4 张中文业务表（MySQL 启动自动跑）
 │
 ├── app/                       Web 应用
-│   ├── backend/               FastAPI 后端（8 service + 8 router + main.py）
-│   ├── frontend/              4 页 Web 前端（HTML + JS + CSS）
+│   ├── backend/               FastAPI 后端（8 service + 9 router + main.py）
+│   ├── frontend/              5 页 Web 前端（HTML + JS + CSS）
 │   └── jobs/                  Spark / Hive / PySpark 训练脚本
 │
 ├── scripts/                   运维脚本（5 个，Windows .bat）
@@ -161,6 +162,7 @@ smart-scenic-bigdata/
 │
 ├── docs/
 │   ├── 作业要求.md            选题要求 + 作业规范（合并）
+│   ├── IMPLEMENTATION.md      项目实现文档（架构/API/算法详解）
 │   ├── 实习报告模板.doc       报告模板（Word 打开）
 │   └── 任务书模板.doc         任务书模板（Word 打开）
 │
@@ -191,18 +193,19 @@ smart-scenic-bigdata/
 
 ---
 
-## 五、Web 应用（4 页前端 + 32 REST API）
+## 五、Web 应用（5 页前端 + 47 REST API）
 
-### 5.1 4 页前端
+### 5.1 5 页前端
 
 | 页面 | URL | 内容 |
 |------|-----|------|
-| 总览 | http://localhost:8080 | 8 KPI + 7 ECharts 图表 |
-| 数据分析 | http://localhost:8080/analysis.html | FPGrowth 关联规则 + 时段分析 |
-| 机器学习预测 | http://localhost:8080/predict.html | 回归/分类/聚类动态表单 |
-| 管理 | http://localhost:8080/manage.html | 5 tab（业务数据）+ 系统管理（容器/模型/任务）|
+| 总览 | http://localhost:8080 | 8 KPI + 4 ML 预测 + 7 ECharts 图表 |
+| 数据分析 | http://localhost:8080/analysis.html | 6 图表 + FPGrowth Sankey |
+| 机器学习预测 | http://localhost:8080/predict.html | 4 场景化卡 (客流/推荐/路线/画像) + 真实 vs 预测 |
+| ⚡ 实时流 | http://localhost:8080/realtime.html | 数据流图 + 触发任务 + HBase 验证 |
+| 业务管理 | http://localhost:8080/manage.html | 4 tab (景点/游客/消费/游玩) + 系统管理 |
 
-### 5.2 32 个 REST 路由
+### 5.2 47 个 REST 路由
 
 | 模块 | 路由数 | 关键路径 |
 |------|--------|----------|
@@ -210,9 +213,10 @@ smart-scenic-bigdata/
 | 景点 | 3 | `/api/attractions{,/{id},/{id}/summary}` |
 | 游客 | 3 | `/api/visitors{,/{id},/{id}/aggregate}` |
 | 消费 | 2 | `/api/consumption{,/visits}` |
-| 分析 | 6 | `/api/analysis/{daily,hourly,region,age-group,type-summary,fpgrowth}` |
-| 预测 | 6 | `/api/predict{,/regression,/classification,/clustering,/compare,/_engine}` |
-| 实时 | 7 | `/api/realtime/{visit-recent,visitor/{id},attraction/{id},publish/review,publish/event,kafka/status}` |
+| 分析 | 7 | `/api/analysis/{daily,hourly,region,age-group,type-summary,fpgrowth,daily-compare}` |
+| 预测 (基础) | 6 | `/api/predict{,/regression,/classification,/clustering,/compare,/_engine}` |
+| 预测 (场景化) | 7 | `/api/predict-tourism/{attraction-forecast,attraction-recommend,route-recommend,visitor-profile/{id},tomorrow-summary,multi-day-forecast,fpgrowth-sankey}` |
+| 实时 | 8 | `/api/realtime/{visit-recent,visitor/{id},attraction/{id},publish/review,publish/event,kafka/status,task/trigger,hbase/clear}` |
 | 系统管理 | 10 | `/api/admin/{status,containers,models,datasets,hdfs,jobs,jobs/{id},actions,actions/{name},pipeline}` |
 
 ### 5.3 系统管理面板
@@ -251,11 +255,11 @@ smart-scenic-bigdata/
    │  spark-submit ml-train
    ▼
 [HDFS /scenic/models/ + /shared/models/]
-   ├─ regression_linear / lasso / ridge / rf
-   ├─ clustering_kmeans
-   └─ classification_dt / rf
+   ├─ regression_linear / lasso / ridge / rf       ← 4 个回归 (预测消费总额)
+   ├─ clustering_kmeans                            ← 1 个聚类 (k=4)
+   └─ classification_rf / dt / gbt / lr            ← 4 个分类 (高价值游客识别)
    ↓
-[后端 pyspark_loader 加载]  →  /api/predict 实时预测
+[后端 sklearn joblib 加载]  →  /api/predict 毫秒级响应
 ```
 
 **前端触发**：manage.html → 系统管理 → ⚡ 一键初始化
@@ -265,7 +269,7 @@ smart-scenic-bigdata/
 ## 七、Kafka 实时流（完整业务实现）
 
 ```
-[前端 manage.html Kafka tab] → POST /api/realtime/publish/review|event
+[前端 realtime.html] → POST /api/realtime/{publish/*,task/trigger,hbase/clear}
    ↓
 [kafka_producer.publish_*()]
    ↓
@@ -278,8 +282,13 @@ smart-scenic-bigdata/
    ↓
 [HBase scenic_reviews / scenic_realtime]
    ↓
-[前端 GET /api/realtime/visit-recent]  验证落库
+[前端 GET /api/realtime/{visit-recent,visitor/{id},attraction/{id}}]  验证落库
 ```
+
+**任务触发器** (`POST /task/trigger`)：一键生成 50-500 个事件，模拟：
+- `random_events`: 随机混合 enter/exit/review
+- `consume_burst`: enter + consume + exit 套餐
+- `review_flood`: 大量评分评论
 
 ---
 
@@ -323,11 +332,27 @@ smart-scenic-bigdata/
 训练在 spark-master **容器内**跑，不依赖 host Java。
 看后端日志：`%TEMP%\backend.log` 或 `docker logs demo-backend`。
 
-### Q4: HBase 报 "hbase:meta is NOT online"
+### Q4: HBase 报 "hbase:meta is NOT online" 或 `Connection refused` 到 hadoop-namenode:9000
+
+**原因**：HBase 启动时会尝试在 HDFS 上创建 `/hbase` 目录，但 datanode 还没完全 join 时
+HBase master 在 `MasterFileSystem.createInitialFileSystemLayout()` 调 `setSafeMode`
+会失败进入 abort 循环。
+
+**修复 (一键完成)**：已在 `docker/hadoop/starter.sh` 和 `app/backend/main.py` 自动化处理：
+1. hadoop-namenode 启动后自动 `hdfs dfs -mkdir -p /hbase && chmod 777`
+2. demo-backend 启动时调 `hbase_svc.init_tables()` 自动建 `scenic_realtime` / `scenic_reviews` 表
+3. HBase 数据卷是 named volume，重启容器不会丢数据
+
+**首次部署如果 HBase 卡在 init 状态**（可能是残留 stale ZK 节点）：
 ```bat
+REM 一键清理并重启
+docker compose stop hbase-master hbase-regionserver-1 hbase-regionserver-2
+docker exec zookeeper-1 /apache-zookeeper-3.9.5-bin/bin/zkCli.sh -server localhost:2181 deleteall /hbase
 docker exec hadoop-namenode hdfs dfs -rm -r -f /hbase
-docker compose restart hbase-master hbase-regionserver-1 hbase-regionserver-2
+docker volume rm smart-scenic-bigdata_hbase-master-data smart-scenic-bigdata_hbase-rs1-data smart-scenic-bigdata_hbase-rs2-data
+docker compose up -d hbase-master hbase-regionserver-1 hbase-regionserver-2
 ```
+等 ~60s 后 `docker exec hbase-master bash -c "hbase shell /tmp/status.hbase"` 应显示 `1 active master, 2 live servers, 0 dead servers`。
 
 ### Q5: Kafka 实时流没数据
 看 `manage.html` → Kafka 实时流 tab：
@@ -394,10 +419,11 @@ scripts\start.bat
 |---------|----------|------|
 | 6.2 平台搭建 | 17 容器一键部署 | ✅ |
 | 6.3 数据采集 | Sqoop MySQL→HDFS + Kafka 实时流 | ✅ |
-| 6.4 数据分析 | Spark SQL + Hive 仓库 + 4 回归 + 1 聚类 + 2 分类 | ✅ |
-| 6.5 可视化 | 4 页前端 + Kafka 实时推送 | ✅ |
+| 6.4 数据分析 | Spark SQL + Hive 仓库 + 4 回归 + 1 聚类 + 4 分类 | ✅ |
+| 6.5 可视化 | 5 页前端 (含独立实时流页) + Kafka 实时推送 | ✅ |
 
-详细作业要求见 [docs/作业要求.md](docs/作业要求.md)。
+详细作业要求见 [docs/作业要求.md](docs/作业要求.md)。  
+实现细节/算法/命令见 [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)。
 
 ---
 
@@ -433,10 +459,10 @@ MIT
 
 ### 启动开发服务器
 
-`at
+```bat
 scripts\start.bat          REM 启动大数据平台（首次）
 scripts\dev-start.bat      REM 启动开发模式（热重载）
-`
+```
 
 ### 热重载机制
 
