@@ -79,6 +79,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("hbase seed skipped: %s", e)
 
+    # 4) Forecast 模型加载 (P6 时序预测)
+    try:
+        from services.forecast_service import get_forecast_service
+        fsvc = get_forecast_service()
+        log.info("forecast service: loaded=%s, history=%d/%d",
+                 fsvc.loaded, len(fsvc._window), 24)
+    except Exception as e:
+        log.warning("forecast service init failed: %s", e)
+
     log.info("=== Smart Scenic Backend ready ===")
 
     yield
@@ -136,6 +145,7 @@ def _register_routers() -> None:
         ("routers.predict",         "/api/predict"),
         ("routers.realtime",        "/api/realtime"),
         ("routers.admin",           "/api/admin"),
+        ("routers.forecast",        "/api/forecast"),  # P6 时序预测
     ]
     registered = 0
     for module_name, prefix in routes_to_try:

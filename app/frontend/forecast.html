@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>实时预测大屏 - 智能景区大数据平台</title>
+<link rel="stylesheet" href="static/css/main.css">
+<script src="static/js/echarts.min.js"></script>
+<style>
+  body { margin: 0; background: #0a1929; color: #e0e6f0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .topbar {
+    background: linear-gradient(90deg, #0d2c4f 0%, #1a3a5f 100%);
+    padding: 12px 24px;
+    border-bottom: 2px solid #2a5a8a;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .topbar h1 { font-size: 22px; margin: 0; color: #7fdbff; }
+  .topbar .controls { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    padding: 6px 16px; border: 1px solid #2a5a8a; background: #1a3a5f; color: #fff;
+    border-radius: 4px; cursor: pointer; font-size: 14px;
+  }
+  .btn:hover { background: #2a5a8a; }
+  .btn.primary { background: #007acc; border-color: #007acc; }
+  .btn.danger { background: #cc4400; border-color: #cc4400; }
+  .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #888; margin-right: 6px; }
+  .status-dot.on { background: #00ff88; box-shadow: 0 0 8px #00ff88; }
+  .container { padding: 16px 24px; }
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .kpi-card {
+    background: linear-gradient(135deg, #0d2c4f 0%, #1a3a5f 100%);
+    border: 1px solid #2a5a8a; border-radius: 6px; padding: 12px 16px;
+  }
+  .kpi-card .label { font-size: 12px; color: #8aa4c4; margin-bottom: 4px; }
+  .kpi-card .value { font-size: 24px; font-weight: 600; color: #7fdbff; }
+  .kpi-card .unit { font-size: 14px; color: #8aa4c4; margin-left: 4px; }
+  .chart-box {
+    background: #0d2c4f; border: 1px solid #2a5a8a; border-radius: 6px;
+    padding: 12px; margin-bottom: 16px;
+  }
+  .chart-box h3 { margin: 0 0 8px 0; font-size: 16px; color: #7fdbff; }
+  #forecast-chart { width: 100%; height: 460px; }
+  .legend-note { font-size: 12px; color: #8aa4c4; margin-top: 8px; line-height: 1.6; }
+  .legend-note .item { display: inline-block; margin-right: 16px; }
+  .legend-note .swatch { display: inline-block; width: 16px; height: 3px; vertical-align: middle; margin-right: 4px; }
+  .back-link { color: #7fdbff; text-decoration: none; font-size: 14px; }
+  .back-link:hover { text-decoration: underline; }
+  .step { font-size: 12px; color: #8aa4c4; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>实时预测大屏 - 智能景区大数据平台</h1>
+  <div class="controls">
+    <span><span id="status-dot" class="status-dot"></span><span id="status-text">Kafka stopped</span></span>
+    <button id="btn-start" class="btn primary">Start</button>
+    <button id="btn-stop" class="btn danger">Stop</button>
+    <a href="index.html" class="back-link">← 返回首页</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">历史窗口</div>
+      <div class="value"><span id="kpi-history">0</span><span class="unit">/ 24 step</span></div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">当前窗口累计游客</div>
+      <div class="value"><span id="kpi-current-visitors">0</span><span class="unit">人</span></div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">当前窗口累计消费</div>
+      <div class="value">¥<span id="kpi-current-consume">0</span></div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">未来 4h 预测峰值</div>
+      <div class="value"><span id="kpi-forecast-peak">-</span><span class="unit">人</span></div>
+      <div class="step" id="kpi-forecast-peak-time">--</div>
+    </div>
+  </div>
+
+  <div class="chart-box">
+    <h3>历史需求 + 未来 4h 预测</h3>
+    <div id="forecast-chart"></div>
+    <div class="legend-note">
+      <span class="item"><span class="swatch" style="background:#2196F3"></span>蓝实线 = 历史需求 (Kafka 消费到的过去 12h 真实数据)</span>
+      <span class="item"><span class="swatch" style="background:#FF9800; border-top: 1px dashed #FF9800;"></span>橙虚线 = 模型预测 (未来 4h, 8 个 30min 窗口)</span>
+      <span class="item"><span class="swatch" style="background:#888"></span>灰虚线 = "now" 分隔线</span>
+      <span class="item">step = 30 min</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============== 全局状态 ==============
+let chart = null;
+let ws = null;
+
+// ============== 工具 ==============
+function fmtTime(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso);
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function fmtTimeShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ============== 初始化图表 ==============
+function initChart() {
+  chart = echarts.init(document.getElementById('forecast-chart'), 'dark');
+  const option = {
+    backgroundColor: 'transparent',
+    title: {
+      text: '历史需求 + 未来 4h 预测',
+      subtext: '30 分钟步长, 历史窗口滚动输入, 预测未来 4 小时 8 个窗口',
+      left: 'center',
+      textStyle: { color: '#7fdbff', fontSize: 16 },
+      subtextStyle: { color: '#8aa4c4' },
+    },
+    tooltip: { trigger: 'axis' },
+    grid: { left: 60, right: 30, top: 80, bottom: 60 },
+    xAxis: {
+      type: 'category',
+      data: [],
+      axisLine: { lineStyle: { color: '#2a5a8a' } },
+      axisLabel: { color: '#8aa4c4', rotate: 30 },
+    },
+    yAxis: {
+      type: 'value',
+      name: '游客数',
+      axisLine: { lineStyle: { color: '#2a5a8a' } },
+      axisLabel: { color: '#8aa4c4' },
+      splitLine: { lineStyle: { color: '#1a3a5f' } },
+    },
+    series: [
+      {
+        name: '历史需求',
+        type: 'line',
+        data: [],
+        smooth: false,
+        symbol: 'none',
+        lineStyle: { color: '#2196F3', width: 2.5 },
+        itemStyle: { color: '#2196F3' },
+        areaStyle: { color: 'rgba(33, 150, 243, 0.15)' },
+        markLine: {
+          symbol: 'none',
+          lineStyle: { color: '#888', type: 'dashed', width: 1.5 },
+          label: { color: '#888', formatter: 'now' },
+          data: [{ xAxis: 0 }],
+        },
+      },
+      {
+        name: '未来 4h 预测',
+        type: 'line',
+        data: [],
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#FF9800', width: 2.5, type: 'dashed' },
+        itemStyle: { color: '#FF9800' },
+      },
+    ],
+  };
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+}
+
+// ============== 更新图表 ==============
+function updateChart(history, forecast) {
+  if (!chart) return;
+  const xHist = (history || []).map(w => fmtTimeShort(w.ts));
+  const yHist = (history || []).map(w => w.visitor_count);
+  // 当前正在累积的窗口
+  const state = window.__lastState || {};
+  const current = state.current || {};
+  // 把 "now" 放在历史末尾
+  const xAll = [...xHist, 'now'];
+  const yAll = [...yHist, null];
+  // 预测部分 (从 now 开始接续)
+  const xForecast = ['now', ...((forecast || []).map((_, i) => {
+    // 用 forecast 的时间戳
+    if (window.__lastPredict && window.__lastPredict.timestamps && window.__lastPredict.timestamps[i]) {
+      return fmtTimeShort(window.__lastPredict.timestamps[i]);
+    }
+    return '';
+  }))];
+  const yForecast = [yHist[yHist.length - 1] || 0, ...(forecast || [])];
+
+  chart.setOption({
+    xAxis: { data: xAll },
+    series: [
+      { data: yAll, markLine: { data: [{ xAxis: xHist.length - 1 }] } },
+      { data: yForecast },
+    ],
+  });
+}
+
+// ============== 更新 KPI ==============
+function updateKpi(state, predict) {
+  document.getElementById('kpi-history').textContent = state.history_len || 0;
+  document.getElementById('kpi-current-visitors').textContent = (state.current && state.current.visitor_count) || 0;
+  document.getElementById('kpi-current-consume').textContent = (state.current && state.current.total_consume) || 0;
+  if (predict && predict.ok && predict.forecast && predict.forecast.length) {
+    const peak = Math.max(...predict.forecast);
+    const peakIdx = predict.forecast.indexOf(peak);
+    document.getElementById('kpi-forecast-peak').textContent = Math.round(peak);
+    document.getElementById('kpi-forecast-peak-time').textContent =
+      predict.timestamps && predict.timestamps[peakIdx]
+        ? `峰值在 ${fmtTime(predict.timestamps[peakIdx])}`
+        : '';
+  } else {
+    document.getElementById('kpi-forecast-peak').textContent = '-';
+  }
+}
+
+// ============== 更新 Kafka 状态指示灯 ==============
+function setStatus(running) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  if (running) {
+    dot.classList.add('on');
+    text.textContent = 'Kafka running';
+  } else {
+    dot.classList.remove('on');
+    text.textContent = 'Kafka stopped';
+  }
+}
+
+// ============== WebSocket ==============
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = `${proto}://${location.hostname}:8000/api/forecast/ws`;
+  console.log('[WS] connecting to', url);
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    console.log('[WS] connected');
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      window.__lastState = msg.state || {};
+      window.__lastPredict = msg.predict || {};
+      setStatus(window.__lastState.kafka_running);
+      updateKpi(window.__lastState, window.__lastPredict);
+      updateChart(window.__lastState.history, window.__lastPredict.forecast);
+    } catch (e) {
+      console.warn('[WS] parse error:', e);
+    }
+  };
+  ws.onclose = () => {
+    console.log('[WS] closed, retry in 5s');
+    setTimeout(connectWS, 5000);
+  };
+  ws.onerror = (e) => {
+    console.warn('[WS] error:', e);
+  };
+}
+
+// ============== Start / Stop 按钮 ==============
+async function callApi(path, method = 'POST') {
+  try {
+    const r = await fetch(`http://localhost:8000${path}`, { method });
+    return await r.json();
+  } catch (e) {
+    console.error(e);
+    return { ok: false, error: String(e) };
+  }
+}
+
+document.getElementById('btn-start').addEventListener('click', async () => {
+  const r = await callApi('/api/forecast/start');
+  if (r.ok) {
+    setStatus(r.kafka_running);
+    if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+  }
+});
+document.getElementById('btn-stop').addEventListener('click', async () => {
+  await callApi('/api/forecast/stop');
+  setStatus(false);
+});
+
+// ============== 启动 ==============
+initChart();
+fetch('http://localhost:8000/api/forecast/state')
+  .then(r => r.json())
+  .then(state => {
+    window.__lastState = state;
+    setStatus(state.kafka_running);
+    document.getElementById('kpi-history').textContent = state.history_len || 0;
+    // 初始预测
+    return fetch('http://localhost:8000/api/forecast/predict');
+  })
+  .then(r => r.json())
+  .then(predict => {
+    window.__lastPredict = predict;
+    updateKpi(window.__lastState, predict);
+    updateChart(window.__lastState.history, predict.forecast);
+  })
+  .catch(e => console.warn('init fetch error:', e));
+
+// 启动 WebSocket
+connectWS();
+</script>
+
+</body>
+</html>

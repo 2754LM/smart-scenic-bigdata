@@ -16,6 +16,7 @@
 | P3 | 作业要求补全（Hive 分区表 + HBase 游玩记录 + 营销建议） | ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
 | P4 | Spark Structured Streaming + 模型持久化 HDFS + main.py 整合 | ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
 | P5 | 数据扩容（22 万行 CSV）+ 真实环境验证手册 | ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
+| P6 | 时序预测大屏（PyTorch 训练 + VM .pt 预测 + WebSocket 推送 + Kafka 滚动窗口）| ✅ | `feature/p3-hive-hbase-marketing` (本分支) |
 
 ---
 
@@ -177,6 +178,88 @@ python scripts/generate-raw-data.py --consumption 200000 --visit 200000 --review
 10. 验证 P4 模型持久化
 11. 端到端业务场景（7 场景）
 12. 性能/资源 + 清理
+
+---
+
+## P6 — 时序预测大屏（本次提交）
+
+### Commit
+```
+<待生成> feat(p6): 实时预测大屏 - PyTorch .pt 训练(本地) + Kafka 滚动窗口 + WebSocket 推送
+```
+
+### 设计目标
+参考"出租车需求时序基线预测"图：
+- **X 轴**：时间 (-12h, -6h, now, +2h, +4h)
+- **蓝实线**：历史需求（过去 12h, 24 个 30min 窗口）— Kafka 消费真实事件
+- **橙虚线**：模型预测（未来 4h, 8 个 30min 窗口）— PyTorch MLP
+- **灰虚线**："now" 分隔线
+- **Start/Stop 按钮**：控制 Kafka consumer 启停
+
+### 任务 1：PyTorch 训练脚本（**本地跑**）
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✨ 新建 | `scripts/train-forecast.py` | 200 行训练脚本<br>· 读 `data/raw_data/consumption.csv` (10w 行)<br>· 按 30min 窗口聚合（visitor_count + total_consume）<br>· MLP 模型 (24*2 → 8)，2 hidden × 64 + dropout 0.2<br>· 50 epochs, Adam lr=1e-3, batch=32<br>· 评估指标：MAE / RMSE / R²<br>· 产物：`data/models/forecast.pt` + `forecast_meta.json`<br>· `--device cpu\|cuda` / `--train-ratio 0.8`<br>· 含 verify_load() 确保 VM 端能 load |
+
+**部署到 VM**：
+```bash
+scp data/models/forecast.pt          user@vm:/opt/scenic/models/
+scp data/models/forecast_meta.json   user@vm:/opt/scenic/models/
+```
+
+### 任务 2：forecast_service（VM 端加载 .pt 预测）
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✨ 新建 | `app/backend/services/forecast_service.py` | 250 行单例服务<br>· `ForecastMLP` 类（跟 train-forecast.py 一致）<br>· `try_load()`: torch.load .pt（失败兜底）<br>· 滚动窗口 `deque(maxlen=24)` 维护 12h 数据<br>· `_maybe_rotate_window()`: 30min 自动滚窗<br>· `feed_event(visitor_id, attraction_id, amount)`: Kafka consumer 喂入<br>· `seed_history_from_csv()`: 冷启动从 CSV 预填<br>· `predict()`: 取 24 步特征 → .pt 推理 → 8 步反标准化<br>· `start_consumer()` / `stop_consumer()`: Kafka 后台线程<br>· Kafka 不可用 fallback 到模拟器（每 8-25s 随机事件） |
+
+### 任务 3：REST API + WebSocket
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✨ 新建 | `app/backend/routers/forecast.py` | 5 REST + 1 WebSocket 端点<br>· `GET  /api/forecast/state`   滚动窗口状态<br>· `GET  /api/forecast/predict` 触发预测<br>· `POST /api/forecast/start`   启 Kafka consumer<br>· `POST /api/forecast/stop`    停 Kafka consumer<br>· `POST /api/forecast/seed`    重新 seed 滚动窗口<br>· `WS   /api/forecast/ws`      **每 30s push 新预测** |
+
+### 任务 4：实时预测大屏
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✨ 新建 | `app/frontend/forecast.html` | 大屏页面（深色 #0a1929 主题）<br>· 顶部 Start/Stop 按钮 + Kafka 状态指示灯（绿/灰）<br>· 4 个 KPI 卡片：历史窗口 / 当前游客 / 当前消费 / 预测峰值<br>· ECharts 双线图：蓝实线（历史）+ 橙虚线（预测）+ 灰虚线（now）<br>· WebSocket 订阅 `/api/forecast/ws`，30s 自动 refresh<br>· 自动重连机制<br>· 与参考图布局一致 |
+
+### 任务 5：整合 + 依赖
+| 改动 | 路径 | 说明 |
+|------|------|------|
+| ✏️ 改 | `app/backend/main.py` | lifespan 加 forecast 启动 hook<br>modular routers 列表加 `routers.forecast` |
+| ✏️ 改 | `app/backend/requirements.txt` | + `torch==2.2.0`（CPU 版）<br>+ `websockets==12.0`（WebSocket 端点） |
+
+### 数据流
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ [本地 Windows]                                                    │
+│   python scripts/train-forecast.py                                │
+│        ↓ PyTorch MLP 训练                                        │
+│   data/models/forecast.pt (≈几十KB)                              │
+│   data/models/forecast_meta.json (scaler + metrics)               │
+│   ──────────────────────────── scp ────────────────────────────►  │
+└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ [VM Linux]                                                        │
+│   ① Kafka scenic_events → ForecastService.feed_event()           │
+│   ② 累积到 30min 窗口 → 滚动到 deque (24 step)                   │
+│   ③ torch.load(forecast.pt) → predict(8 步)                     │
+│   ④ WebSocket /api/forecast/ws → 浏览器 30s push                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 演示流程
+1. **本地训练**（Windows）：`python scripts/train-forecast.py` → 1-2 分钟生成 .pt
+2. **部署到 VM**：`scp data/models/forecast.pt user@vm:/opt/scenic/models/`
+3. **启动后端**：`uvicorn app.backend.main:app` → 看到 `forecast service: loaded=True, history=24/24`
+4. **打开大屏**：`http://localhost:8080/forecast.html`
+5. **点 Start** → Kafka consumer 启动 → 蓝线开始滚 → 橙虚线每 30s 重画
+6. **发测试事件** → 蓝线有 spike → 模型自动重新预测
+
+### 边界处理
+- **模型文件不存在**：`try_load()` 返回 False，端点返回 503，UI 降级为"--"
+- **历史窗口不足**：predict 返回 `{ok: false, error: "历史窗口不足"}`
+- **Kafka 不可用**：自动 fallback 到模拟器（每 8-25s 随机事件）
+- **WebSocket 断开**：前端自动重连（5s 后）
 
 ---
 

@@ -9,3 +9,10 @@ numpy==1.26.4
 pandas==2.2.0
 scikit-learn==1.4.0
 joblib==1.3.2
+
+# === Deep Learning (P6 时序预测) ===
+# torch 用 CPU 版即可, VM 部署不需要 GPU
+# 国内镜像:  pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch==2.2.0
+# websockets 是 FastAPI WebSocket 端点依赖
+websockets==12.0
