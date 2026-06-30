@@ -74,3 +74,10 @@ docker/hive/*.bak
 
 # IDE build output
 out/
+
+# 训练的 sklearn 模型（运行时由 spark-master 写到共享卷，demo-backend 加载）
+app/backend/sklearn_out/
+app/jobs/fix_white.py
+
+# 容器内 shared/ 目录（运行时的模型与数据，不进版本库）
+shared/
