@@ -35,27 +35,25 @@ def _has_models() -> bool:
 
 
 def _train_blocking(timeout: int = 600) -> bool:
-    """阻塞式触发训练：docker exec spark-master spark-submit /opt/jobs/ml/train.py
-    等待训练完成（或超时）。返回是否成功。
+    """阻塞式触发训练：通过 Docker socket API 在 spark-master 容器内跑
+    spark-submit ml-train. 等待完成（或超时），返回是否成功。
     """
     log.info("auto-train: triggering spark-submit in spark-master container...")
     try:
-        result = subprocess.run(
-            [
-                "docker", "exec",
-                config.SPARK_CONTAINER,
-                "bash", "/opt/jobs/spark-submit.sh", "ml-train",
-            ],
-            capture_output=True,
-            text=True,
+        from services.docker_client import exec_capture
+        result = exec_capture(
+            config.SPARK_CONTAINER,
+            ["bash", "/opt/jobs/spark-submit.sh", "ml-train"],
             timeout=timeout,
         )
-        if result.returncode == 0:
+        if result.get("exit_code") == 0:
             log.info("auto-train: training completed")
             return True
         else:
             log.error("auto-train: training failed (rc=%s)\nstdout=%s\nstderr=%s",
-                      result.returncode, result.stdout[-500:], result.stderr[-500:])
+                      result.get("exit_code"),
+                      (result.get("stdout") or "")[-500:],
+                      (result.get("stderr") or "")[-500:])
             return False
     except subprocess.TimeoutExpired:
         log.error("auto-train: training timeout after %s seconds", timeout)

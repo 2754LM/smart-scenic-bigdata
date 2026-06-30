@@ -31,66 +31,13 @@ log = logging.getLogger("smart-scenic.admin")
 def _run_in_container(container: str, *cmd, timeout: int = 30) -> dict:
     """Run command in container. Returns {stdout, stderr, exit_code}.
 
-    Strategy: docker socket API with Tty=false + AttachStdout=false (Detach),
-    poll for completion, then fetch captured stdout via /exec/{id}/logs
-    (works for recent API versions when AttachStdout was true at start).
+    Strategy: use docker socket API's exec_capture which properly handles
+    chunked transfer-encoding + 8-byte stream frames (1=stdout, 2=stderr).
 
     Usage: _run_in_container("mysql", "mysql", "-e", "SELECT 1", timeout=10)
     """
-    import time as _t
-    from services.docker_client import _request_raw
-
-    cmd = list(cmd)
-
-    # 1. Create exec instance — AttachStdout=true so /exec/{id}/logs will work
-    exec_id = None
-    for _attempt in range(3):
-        try:
-            exec_id = _request("POST", f"/containers/{container}/exec", {
-                "Cmd": cmd,
-                "AttachStdout": True,
-                "AttachStderr": True,
-                "Tty": False,
-            })
-            if exec_id and "Id" in exec_id:
-                break
-        except Exception:
-            pass
-        _t.sleep(1)
-    if not exec_id or "Id" not in exec_id:
-        return {"stdout": "", "stderr": "exec create failed after 3 retries", "exit_code": -1}
-    eid = exec_id["Id"]
-
-    # 2. Start exec with Detach=true (don't block on stdout stream)
-    start_resp = _request("POST", f"/exec/{eid}/start", {"Detach": True})
-    if start_resp is None:
-        return {"stdout": "", "stderr": "exec start failed", "exit_code": -1}
-
-    # 3. Poll until Running=false (poll every 2s, max timeout seconds)
-    ec = -1
-    deadline = _t.time() + timeout
-    while _t.time() < deadline:
-        info = _request("GET", f"/exec/{eid}/json")
-        if isinstance(info, dict):
-            if not info.get("Running", True):
-                ec_obj = info.get("ExitCode")
-                ec = ec_obj if isinstance(ec_obj, int) else -1
-                break
-        _t.sleep(2)
-    else:
-        return {"stdout": "", "stderr": f"exec timed out after {timeout}s", "exit_code": -1}
-
-    # 4. Fetch captured stdout/stderr via /exec/{id}/logs (works for AttachStdout=true execs).
-    # NOTE: For detached execs the API returns a placeholder; result may be empty.
-    # The caller will still see correct exit_code and can verify HDFS artifacts separately.
-    log_resp = _request("GET", f"/exec/{eid}/logs", {"stdout": True, "stderr": True})
-    body_text = ""
-    if log_resp is not None and not isinstance(log_resp, dict):
-        body_text = str(log_resp)
-    # Common error responses → treat as empty (caller uses exit_code)
-    if isinstance(log_resp, dict) and log_resp.get("message"):
-        body_text = ""
-    return {"stdout": body_text, "stderr": "", "exit_code": ec}
+    from services.docker_client import exec_capture
+    return exec_capture(container, list(cmd), timeout=timeout)
 
 
 # ============================================================
