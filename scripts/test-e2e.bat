@@ -185,7 +185,7 @@ if !TBL! geq 0 (echo        PASS [OK] tables=!TBL! & set /a PASS+=1) else (echo 
 
 set /a TOTAL+=1
 echo [!TOTAL!] /api/analysis/hourly reachable (pyhive wired up) ...
-docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/analysis/hourly', timeout=8); d=json.loads(r.read().decode()); print('OK' if d.get('source','').startswith('hive') else d.get('source','NA'))" > "%TEMP%\h.txt" 2>&1
+docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/analysis/hourly', timeout=60); d=json.loads(r.read().decode()); print('OK' if d.get('source','').startswith('hive') else d.get('source','NA'))" > "%TEMP%\h.txt" 2>&1
 findstr /C:"OK" "%TEMP%\h.txt" >nul
 if !errorlevel! equ 0 (echo        PASS [OK] source=hive & set /a PASS+=1) else (echo        FAIL (run Hive DDL in manage.html first) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Hive-API,)
 

@@ -41,25 +41,18 @@ def _beeline(sql: str, timeout: int = 90) -> List[Dict[str, Any]]:
         ...
     (with --outputformat=tsv2).
     """
-    import services.admin_service as ad
-    from services.docker_client import _request as dc_request
+    from services.docker_client import exec_capture
     sql_escaped = sql.replace("'", "'\\''")
     cmd = f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/{HIVE_DB}' -n hive -p hive --silent=true --outputformat=tsv2 -e '{sql_escaped}' 2>/dev/null"
-    r = ad._run_in_container("hive-server-1", "bash", "-c", cmd, timeout=timeout)
+    r = exec_capture("hive-server-1", ["bash", "-c", cmd], timeout=timeout)
     stdout = r.get("stdout", "") or ""
     rc = r.get("exit_code", -1)
     if rc not in (0, None) or "FAILED: Execution Error" in stdout or "Error:" in stdout:
-        # Detached exec stdout isn't captured. Fall back to container logs (stdout tail).
-        log.warning("beeline rc=%s — fetching container logs (exec stdout detached)", rc)
-        log_resp = dc_request("GET", "/containers/hive-server-1/logs", {"stdout": True, "stderr": True, "tail": 500})
-        if log_resp and not isinstance(log_resp, dict):
-            return _parse_beeline_tsv(str(log_resp))
-        # Real error visible on stdout: raise
-        if "FAILED" in stdout or "Error" in stdout:
-            log.error("beeline error: %s", stdout[:500])
+        log.warning("beeline rc=%s, stdout[:200]=%r", rc, stdout[:200])
+        if "FAILED: Execution Error" in stdout or "Error:" in stdout:
             raise RuntimeError(f"Hive query failed: {stdout[:300]}")
-        # No stdout and no container log: treat as empty
         return []
+    return _parse_beeline_tsv(stdout)
     return _parse_beeline_tsv(stdout)
 
 

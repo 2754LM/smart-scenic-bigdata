@@ -38,7 +38,7 @@ def _run_in_container(container: str, *cmd, timeout: int = 30) -> dict:
     Usage: _run_in_container("mysql", "mysql", "-e", "SELECT 1", timeout=10)
     """
     import time as _t
-    from services.docker_client import _request
+    from services.docker_client import _request_raw
 
     cmd = list(cmd)
 
