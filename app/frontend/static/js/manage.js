@@ -23,28 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('vr-search').addEventListener('click', () => { visitsPage = 1; loadVisits(); });
   document.getElementById('hb-search').addEventListener('click', loadHBase);
   document.getElementById('hb2-search')?.addEventListener('click', loadHBase2);
-
-  // 实时流 - 触发任务
-  const pt = document.getElementById('kafka-task-trigger');
-  if (pt) pt.addEventListener('click', triggerKafkaTask);
-
-  // 实时流 - 自动刷新
-  const rb = document.getElementById('hb-refresh');
-  if (rb) rb.addEventListener('click', toggleRealtimeAutoRefresh);
-
-  // 默认自动刷新 Kafka 状态
-  refreshKafkaStatus();
 });
 
 function switchTab(tab) {
-  // 切 tab 前先停掉自动刷新
-  if (realtimeAutoRefresh) {
-    clearInterval(realtimeAutoRefresh);
-    realtimeAutoRefresh = null;
-    const btn = document.getElementById('hb-refresh');
-    if (btn) btn.textContent = '🔄 自动刷新 (3秒/次)';
-  }
-
   currentTab = tab;
   document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
   const target = document.getElementById(`tab-${tab}`);
@@ -58,8 +39,6 @@ function switchTab(tab) {
   if (tab === 'visitors')    loadVisitors();
   if (tab === 'consumption') loadConsumption();
   if (tab === 'visits')      loadVisits();
-  if (tab === 'realtime')    loadRealtime();
-  if (tab === 'hbase')       loadHBase2();
   if (tab === 'system' && window.loadAdmin) window.loadAdmin();
 }
 
@@ -161,116 +140,4 @@ async function loadVisits() {
   } catch (e) { renderError(el, '加载失败'); }
 }
 
-// ---- 实时流（合并 Kafka + HBase 验证） ----
-async function loadRealtime() {
-  await loadHBase();
-  await refreshKafkaStatus();
-}
-
-function toggleRealtimeAutoRefresh() {
-  const btn = document.getElementById('hb-refresh');
-  if (realtimeAutoRefresh) {
-    clearInterval(realtimeAutoRefresh);
-    realtimeAutoRefresh = null;
-    btn.textContent = '🔄 自动刷新 (3秒/次)';
-    btn.classList.remove('btn-primary');
-  } else {
-    realtimeAutoRefresh = setInterval(loadHBase, 3000);
-    btn.textContent = '⏸ 停止自动刷新';
-    btn.classList.add('btn-primary');
-  }
-}
-
-async function triggerKafkaTask() {
-  const taskType = document.getElementById('kafka-task-type').value;
-  const count = parseInt(document.getElementById('kafka-task-count').value);
-  const aidRaw = document.getElementById('kafka-task-aid').value;
-  const body = {
-    task_type: taskType,
-    count: count,
-    attraction_id: aidRaw ? parseInt(aidRaw) : null,
-  };
-  const div = document.getElementById('kafka-task-result');
-  renderLoading(div);
-  try {
-    const r = await fetch(window.API_BASE + '/api/realtime/task/trigger', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    }).then(r => r.json());
-    div.innerHTML = `
-      <div class="result-block" style="background: rgba(16,185,129,0.08); border-left: 3px solid #10b981">
-        <div style="color: #10b981; font-size: 14px">⚡ ${r.events_published} 个事件已发布到 Kafka</div>
-        <div style="color: #9ca3af; font-size: 12px; margin-top: 6px">${escapeHtml(r.kafka_status || '')}</div>
-        <div style="color: #9ca3af; font-size: 12px">2秒后自动刷新下方 HBase 数据...</div>
-      </div>
-    `;
-    setTimeout(loadHBase, 2000);
-    refreshKafkaStatus();
-  } catch (e) {
-    renderError(div, '触发失败: ' + e.message);
-  }
-}
-
-async function refreshKafkaStatus() {
-  try {
-    const r = await API.kafkaStatus();
-    const el = document.getElementById('kafka-status');
-    if (el) el.textContent = JSON.stringify(r, null, 2);
-  } catch (e) { console.error(e); }
-}
-
-// ---- HBase (实时流 tab 内) ----
-async function loadHBase() {
-  const el = document.getElementById('hbase-result');
-  const type = document.getElementById('hb-type')?.value || 'recent';
-  const idEl = document.getElementById('hb-id');
-  const id = idEl && idEl.value ? +idEl.value : null;
-  renderLoading(el);
-  try {
-    let r;
-    if (type === 'visitor') {
-      if (!id) { renderError(el, '请输入游客ID'); return; }
-      r = await API.visitorProfile(id);
-    } else if (type === 'attraction') {
-      if (!id) { renderError(el, '请输入景点ID'); return; }
-      r = await API.attractionStat(id);
-    } else {
-      r = await API.visitRecent(20);
-    }
-    if (!r.data) { renderEmpty(el, '暂无数据 (请先点上面的"触发任务"按钮生成事件)'); return; }
-
-    // 表格化展示
-    const data = Array.isArray(r.data) ? r.data : [r.data];
-    let html = '<table style="width:100%; border-collapse:collapse; margin-top:8px">';
-    if (data.length) {
-      const keys = Object.keys(data[0]);
-      html += '<tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr>';
-      data.forEach(d => {
-        html += '<tr>' + keys.map(k => `<td>${escapeHtml(String(d[k] ?? ''))}</td>`).join('') + '</tr>';
-      });
-    }
-    html += '</table>';
-    html += `<div style="margin-top:8px; font-size:12px; color:#9ca3af">共 ${data.length} 条记录</div>`;
-    el.innerHTML = html;
-  } catch (e) { renderError(el, '查询失败: ' + e.message); }
-}
-
-// ---- HBase 独立 tab (历史数据) ----
-async function loadHBase2() {
-  const el = document.getElementById('hbase2-result');
-  const type = document.getElementById('hb2-type')?.value;
-  const id = +document.getElementById('hb2-id')?.value;
-  renderLoading(el);
-  try {
-    let r;
-    if (type === 'visitor') {
-      if (!id) { renderError(el, '请输入游客ID'); return; }
-      r = await API.visitorProfile(id);
-    } else if (type === 'attraction') {
-      if (!id) { renderError(el, '请输入景点ID'); return; }
-      r = await API.attractionStat(id);
-    }
-    if (!r || !r.data) { renderEmpty(el, '暂无数据'); return; }
-    el.innerHTML = `<pre class="text-mono" style="white-space: pre-wrap; word-break: break-all; font-size: 12px">${escapeHtml(JSON.stringify(r.data, null, 2))}</pre>`;
-  } catch (e) { renderError(el, '查询失败: ' + e.message); }
-}
+// ---- 实时流已迁移到 realtime.html ----

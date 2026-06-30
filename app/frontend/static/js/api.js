@@ -54,7 +54,7 @@ const API = {
   },
   visits:             (q={})  => {
     const qs = new URLSearchParams(q).toString();
-    return api(`/api/visits${qs ? '?' + qs : ''}`);
+    return api(`/api/consumption/visits${qs ? '?' + qs : ''}`);
   },
 
   // 分析
@@ -85,6 +85,8 @@ const API = {
   },
   tourismVisitorProfile: (vid) => api(`/api/predict-tourism/visitor-profile/${vid}`),
   tourismTomorrowSummary: () => api('/api/predict-tourism/tomorrow-summary'),
+  tourismMultiDayForecast: (days=7) => api(`/api/predict-tourism/multi-day-forecast?days=${days}`),
+  tourismFpgrowthSankey: (limit=20) => api(`/api/predict-tourism/fpgrowth-sankey?limit=${limit}`),
 
   // 实时数据
   visitRecent:        (limit=20) => api(`/api/realtime/visit-recent?limit=${limit}`),

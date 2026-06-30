@@ -133,6 +133,31 @@
       </div>
     </div>
 
+    <!-- 场景 1.5: 多日预测 (7天/30天) -->
+    <div class="scenario-card">
+      <div class="scenario-title"><span class="scenario-icon">📅</span>多日客流预测（7 天 / 30 天）</div>
+      <div class="scenario-desc">基于历史日均 + 星期因子 + 月因子 + 近期趋势，预测未来 N 天每个景点的客流量</div>
+
+      <div class="scenario-row" style="margin-bottom: 12px">
+        <label style="color:#b0c4de; font-size:13px">预测天数:</label>
+        <select id="multi-days" style="min-width:100px">
+          <option value="7">未来 7 天</option>
+          <option value="14">未来 14 天</option>
+          <option value="30">未来 30 天</option>
+        </select>
+        <button class="btn btn-primary" id="btn-multi">🔮 生成预测</button>
+        <span class="text-muted" style="font-size:12px">每个景点 × 每天</span>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1.4fr 1fr; gap:16px">
+        <div id="chart-multi-total" style="height: 320px"></div>
+        <div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:6px">📊 各景点未来 N 天累计</div>
+          <div id="multi-list" style="max-height:300px; overflow-y:auto; font-size:12px"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 场景 2: 智能推荐 + 场景 3: 路线规划 -->
     <div class="grid-2-scenario">
       <!-- 智能推荐 -->

@@ -282,6 +282,27 @@ def attraction_stat(scenic_id: int) -> Optional[Dict[str, Any]]:
 # Demo seeding: write a few rows so the page has something to show
 # when HBase is empty.
 # ----------------------------------------------------------------------
+def clear_realtime_table() -> int:
+    """清空 scenic_realtime 表的所有行，返回删除行数（演示用）"""
+    if not _docker_available():
+        return 0
+    # 先 scan 出所有 row key
+    scan_out = hbase_shell('scan "scenic_realtime"')
+    cells = _parse_hbase_scan(scan_out)
+    if not cells:
+        return 0
+    row_keys = sorted({c["row_key"] for c in cells})
+    # 分批删除（避免命令过长）
+    deleted = 0
+    for rk in row_keys:
+        try:
+            hbase_shell(f'deleteall "scenic_realtime", "{rk}"')
+            deleted += 1
+        except Exception:
+            pass
+    return deleted
+
+
 def seed_if_empty() -> bool:
     """If scenic_realtime is empty, write 30 demo rows so front-end isn't blank.
 

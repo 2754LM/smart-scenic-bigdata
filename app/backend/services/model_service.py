@@ -91,12 +91,14 @@ def predict(task: str, features: Dict[str, Any]) -> Dict[str, Any]:
 
     if task == "consumption_amount":
         candidates = ("regression_ridge", "regression_linear", "regression_lasso", "regression_rf")
+    elif task == "daily_visitor":
+        # 客流量预测：使用 ridge 回归模型 + 日聚合
+        candidates = ("regression_ridge", "regression_rf")
     elif task == "high_value_visitor":
-        candidates = ("classification_rf",)
+        # 4 个分类模型 (rf/dt/gbt/lr)，按 accuracy 排序优先级
+        candidates = ("classification_rf", "classification_gbt", "classification_dt", "classification_lr")
     elif task == "cluster":
         candidates = ("clustering_kmeans",)
-    elif task == "daily_visitor":
-        candidates = ("regression_ridge",)
     else:
         raise ValueError(f"unsupported task: {task}")
 

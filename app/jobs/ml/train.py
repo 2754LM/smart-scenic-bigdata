@@ -28,18 +28,28 @@ for _p in ("/usr/local/lib/python3.8/dist-packages", "/usr/lib/python3/dist-pack
 import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.linear_model import LinearRegression, Lasso, Ridge, LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.cluster import KMeans
 from sklearn.pipeline import Pipeline as SKPipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, f1_score
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.ml import Pipeline, PipelineModel
 from pyspark.ml.feature import VectorAssembler, StandardScaler as SparkScaler
 from pyspark.ml.regression import LinearRegression as SparkLR, LinearRegressionModel, RandomForestRegressor as SparkRFR
 from pyspark.ml.clustering import KMeans as SparkKM, KMeansModel
-from pyspark.ml.classification import RandomForestClassifier as SparkRFC, RandomForestClassificationModel, DecisionTreeClassifier as SparkDTC
-from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator, MulticlassClassificationEvaluator
+from pyspark.ml.classification import (RandomForestClassifier as SparkRFC,
+                                      RandomForestClassificationModel,
+                                      DecisionTreeClassifier as SparkDTC,
+                                      DecisionTreeClassificationModel,
+                                      GBTClassifier as SparkGBT,
+                                      GBTClassificationModel,
+                                      LogisticRegression as SparkLogReg,
+                                      LogisticRegressionModel)
+from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator, MulticlassClassificationEvaluator, BinaryClassificationEvaluator
 
 spark = SparkSession.builder.appName("SmartScenic-ML-Train").getOrCreate()
 spark.sparkContext.setLogLevel("WARN")
@@ -177,25 +187,50 @@ for i, c in enumerate(km_trained.clusterCenters()):
 print("\n[4/5] classification ...", flush=True)
 df_clf = df_prep.filter(F.col("high_value_label").isin([0.0, 1.0]))
 train_c, test_c = df_clf.randomSplit([0.8, 0.2], seed=42)
-for name, spark_model in [
-    ("rf", SparkRFC(featuresCol="features", labelCol="high_value_label", numTrees=20, maxDepth=10)),
+# 先准备训练/测试数据 (4 个模型共用)
+train_c_pdf = train_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
+test_c_pdf = test_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
+Xc_train = train_c_pdf[FEATURE_COLS].values
+yc_train = train_c_pdf["high_value_label"].astype(int).values
+Xc_test = test_c_pdf[FEATURE_COLS].values
+yc_test = test_c_pdf["high_value_label"].astype(int).values
+
+# 4 个分类模型：RF / DecisionTree / GBT / LogisticRegression
+for name, spark_model, sk_factory in [
+    ("rf",      SparkRFC(featuresCol="features", labelCol="high_value_label", numTrees=20, maxDepth=10),
+     lambda: RandomForestClassifier(n_estimators=20, max_depth=10, random_state=42)),
+    ("dt",      SparkDTC(featuresCol="features", labelCol="high_value_label", maxDepth=10),
+     lambda: DecisionTreeClassifier(max_depth=10, random_state=42)),
+    ("gbt",     SparkGBT(featuresCol="features", labelCol="high_value_label", maxIter=20, maxDepth=5),
+     lambda: GradientBoostingClassifier(n_estimators=20, max_depth=5, random_state=42)),
+    ("lr",      SparkLogReg(featuresCol="features", labelCol="high_value_label", maxIter=50, regParam=0.01),
+     lambda: LogisticRegression(max_iter=50, C=1.0, random_state=42)),
 ]:
-    trained = spark_model.fit(train_c)
-    pred = trained.transform(test_c)
-    acc = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="accuracy").evaluate(pred)
-    f1 = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="f1").evaluate(pred)
-    print(f"    {name:4s}  acc={acc:6.4f}  f1={f1:6.4f}", flush=True)
+    try:
+        trained = spark_model.fit(train_c)
+        pred = trained.transform(test_c)
+        acc = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="accuracy").evaluate(pred)
+        f1 = MulticlassClassificationEvaluator(labelCol="high_value_label", metricName="f1").evaluate(pred)
+        try:
+            auc = BinaryClassificationEvaluator(labelCol="high_value_label", metricName="areaUnderROC").evaluate(pred)
+        except Exception:
+            auc = 0.0
+        print(f"    {name:4s}  acc={acc:6.4f}  f1={f1:6.4f}  auc={auc:6.4f}", flush=True)
 
-    # sklearn 重建（同样用真实数据）
-    train_c_pdf = train_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
-    test_c_pdf = test_c.select(FEATURE_COLS + ["high_value_label"]).toPandas()
-    Xc_train = train_c_pdf[FEATURE_COLS].values
-    yc_train = train_c_pdf["high_value_label"].astype(int).values
-    sk_clf = RandomForestClassifier(n_estimators=20, max_depth=10, random_state=42).fit(Xc_train, yc_train)
-    joblib.dump(sk_clf, f"{SKLEARN_OUT}/classification_{name}.pkl")
-    print(f"    saved {SKLEARN_OUT}/classification_{name}.pkl", flush=True)
+        # 重建 sklearn 模型
+        sk_clf = sk_factory().fit(Xc_train, yc_train)
+        joblib.dump(sk_clf, f"{SKLEARN_OUT}/classification_{name}.pkl")
+        print(f"    saved {SKLEARN_OUT}/classification_{name}.pkl", flush=True)
 
-    report["classification"].append({"model": name, "accuracy": float(acc), "f1": float(f1)})
+        report["classification"].append({
+            "model": name,
+            "accuracy": float(acc),
+            "f1": float(f1),
+            "auc": float(auc),
+        })
+    except Exception as e:
+        print(f"    {name:4s}  FAILED: {e}", flush=True)
+        import traceback; traceback.print_exc()
 
 
 # ============== 5. 对比报告 ==============

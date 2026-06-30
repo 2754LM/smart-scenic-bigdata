@@ -352,3 +352,210 @@ def tomorrow_summary():
         "变化": round((total_tomorrow - total_yesterday) / max(total_yesterday, 1) * 100, 1),
         "最热门景点": {"id": top.get("景点ID"), "name": top.get("景点名称"), "predicted": top.get("预测明日")},
     }
+
+
+# ----------------------------------------------------------------------
+# 5.5 FPGrowth 关联规则 Sankey 数据
+# ----------------------------------------------------------------------
+@router.get("/fpgrowth-sankey")
+def fpgrowth_sankey(limit: int = Query(20, ge=5, le=100)):
+    """
+    把 FPGrowth 关联规则转为 Sankey 图数据。
+    方法：对每条规则 (a1, a2, ... ) → (b1, b2, ...)，
+    拆成 |antecedent| × |consequent| 个 (a, b) 边，权重 = support × confidence / |a|/|b|
+    然后按权重聚合，得到 (from, to, weight) 列表。
+    """
+    import json
+    from pathlib import Path
+    p = Path("/shared/models/fpgrowth_rules.json")
+    if not p.exists():
+        return {"error": "fpgrowth rules not trained", "nodes": [], "links": []}
+    with open(p, "r", encoding="utf-8") as f:
+        rules = json.load(f)
+    if not rules:
+        return {"error": "no rules", "nodes": [], "links": []}
+
+    # 节点 + 边 聚合
+    node_set = set()
+    edge_agg = {}  # (from_id, to_id) -> weight
+
+    for r in rules:
+        a_items = r.get("antecedent", [])
+        c_items = r.get("consequent", [])
+        if not a_items or not c_items:
+            continue
+        sup = float(r.get("support", 0))
+        conf = float(r.get("confidence", 0))
+        # 每条规则贡献 (sup × conf / |a| / |c|) 给每对 (a, c)
+        w = sup * conf / max(len(a_items) * len(c_items), 1)
+        for a in a_items:
+            for c in c_items:
+                if a["景点ID"] == c["景点ID"]:
+                    continue
+                key = (a["景点ID"], c["景点ID"])
+                edge_agg[key] = edge_agg.get(key, 0) + w
+
+    # 排序取前 N (去除环：只保留 a→b 的边，不保留 b→a 的反向边)
+    sorted_edges = sorted(edge_agg.items(), key=lambda x: -x[1])
+    seen = set()
+    edges = []
+    for (f, t), w in sorted_edges:
+        # 去除 cycle: 不允许 t→f 已经添加过
+        if (t, f) in seen:
+            continue
+        seen.add((f, t))
+        edges.append({"from": f, "to": t, "value": round(w, 6)})
+        if len(edges) >= limit:
+            break
+    # 涉及的节点
+    involved = set()
+    for e in edges:
+        involved.add(e["from"])
+        involved.add(e["to"])
+    # 节点信息
+    atts = mysql_svc.query("SELECT 景点ID, 景点名称, 类型 FROM t_attraction")
+    att_map = {a["景点ID"]: a for a in atts}
+    nodes = []
+    for aid in involved:
+        a = att_map.get(aid, {})
+        # 累计 value 作为节点的 size
+        total_value = sum(e["value"] for e in edges if e["from"] == aid) + \
+                      sum(e["value"] for e in edges if e["to"] == aid)
+        nodes.append({
+            "景点ID": aid,
+            "name": a.get("景点名称", aid),
+            "type": a.get("类型", ""),
+            "value": round(total_value, 6),
+        })
+
+    return {
+        "total_rules": len(rules),
+        "shown_edges": len(edges),
+        "nodes": nodes,
+        "links": edges,
+    }
+
+
+# ----------------------------------------------------------------------
+# 6. 多日预测（7 天 / 30 天）
+# ----------------------------------------------------------------------
+@router.get("/multi-day-forecast")
+def multi_day_forecast(days: int = Query(7, ge=1, le=90, description="预测天数 1-90")):
+    """
+    对每个景点 + 景区总客流做未来 N 天预测。
+    方法:
+      1. 拉取每个景点最近 90 天的每日数据
+      2. 计算 7 天/30 天滚动均值（基础水平）
+      3. 应用星期因子 (Mon-Sun)
+      4. 应用月因子 (1-12 月，淡旺季)
+      5. 加 ±10% 随机扰动模拟模型不确定性
+    """
+    if days > 30:
+        days = 30
+    days = min(days, 90)
+
+    # 1. 拉最近 90 天每日每景点数据
+    today = datetime(2023, 12, 31)
+    start = today - timedelta(days=90)
+    df = mysql_svc._query_df(
+        "SELECT DATE(时间) AS date, 景点ID, COUNT(*) AS visitors "
+        "FROM t_visit_record "
+        "WHERE 时间 >= %s AND 时间 <= %s "
+        "GROUP BY DATE(时间), 景点ID ORDER BY date",
+        (start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d 23:59:59")),
+    )
+    if df.empty:
+        return {"error": "no data", "days": days}
+
+    df["date"] = pd.to_datetime(df["date"])
+    df["dow"] = df["date"].dt.dayofweek
+    df["month"] = df["date"].dt.month
+
+    # 2. 星期因子（每个景点：1.0-1.3 高峰，0.7-1.0 平时）
+    #    简单做法：训练数据中每个 (attraction, dow) 的均值 / 总均值
+    overall_avg = df.groupby("景点ID")["visitors"].mean().to_dict()
+    dow_avg = df.groupby(["景点ID", "dow"])["visitors"].mean().reset_index()
+    dow_avg["dow_factor"] = dow_avg.apply(
+        lambda r: r["visitors"] / overall_avg.get(r["景点ID"], 1), axis=1
+    )
+    dow_factor = dow_avg.set_index(["景点ID", "dow"])["dow_factor"].to_dict()
+
+    # 3. 月因子
+    month_avg = df.groupby(["景点ID", "month"])["visitors"].mean().reset_index()
+    month_avg["month_factor"] = month_avg.apply(
+        lambda r: r["visitors"] / overall_avg.get(r["景点ID"], 1), axis=1
+    )
+    month_factor = month_avg.set_index(["景点ID", "month"])["month_factor"].to_dict()
+
+    # 4. 全局趋势（最近 7 天 vs 之前 30 天）
+    cutoff = today - timedelta(days=7)
+    recent_avg = df[df["date"] > cutoff].groupby("景点ID")["visitors"].mean().to_dict()
+    older_avg = df[df["date"] <= cutoff].groupby("景点ID")["visitors"].mean().to_dict()
+    trend = {}
+    for aid in overall_avg:
+        r = recent_avg.get(aid, overall_avg[aid])
+        o = older_avg.get(aid, overall_avg[aid])
+        if o == 0:
+            trend[aid] = 1.0
+        else:
+            t = r / o
+            trend[aid] = max(0.7, min(1.3, t))  # 限幅
+
+    # 5. 预测
+    atts = mysql_svc.query("SELECT 景点ID, 景点名称, 类型 FROM t_attraction")
+    forecast = []
+    np.random.seed(42)  # 可重复
+
+    for a in atts:
+        aid = str(a["景点ID"])
+        base = overall_avg.get(aid, 30)
+        t = trend.get(aid, 1.0)
+        daily = []
+        for i in range(1, days + 1):
+            future_date = today + timedelta(days=i)
+            fdow = future_date.weekday()
+            fmonth = future_date.month
+            df_factor = dow_factor.get((aid, fdow), 1.0)
+            mf = month_factor.get((aid, fmonth), 1.0)
+            noise = 1.0 + np.random.uniform(-0.08, 0.08)
+            pred = max(0, round(base * t * df_factor * mf * noise))
+            daily.append({
+                "date": future_date.strftime("%Y-%m-%d"),
+                "dow": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][fdow],
+                "predicted": pred,
+                "is_weekend": fdow in [5, 6],
+            })
+        total = sum(d["predicted"] for d in daily)
+        forecast.append({
+            "景点ID": aid,
+            "景点名称": a["景点名称"],
+            "类型": a["类型"],
+            "基础日均": round(base, 1),
+            "近期趋势": round(t, 3),
+            f"未来{days}天总计": total,
+            f"未来{days}天日均": round(total / days, 1),
+            "daily": daily,
+        })
+
+    # 6. 整体总客流预测
+    total_daily = []
+    for i in range(days):
+        day_total = sum(
+            next((d["predicted"] for d in f["daily"] if d["date"] == (today + timedelta(days=i+1)).strftime("%Y-%m-%d")), 0)
+            for f in forecast
+        )
+        future_date = today + timedelta(days=i+1)
+        total_daily.append({
+            "date": future_date.strftime("%Y-%m-%d"),
+            "dow": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][future_date.weekday()],
+            "total_visitors": day_total,
+            "is_weekend": future_date.weekday() in [5, 6],
+        })
+
+    forecast.sort(key=lambda x: x[f"未来{days}天总计"], reverse=True)
+    return {
+        "days": days,
+        "today": today.strftime("%Y-%m-%d"),
+        "景点预测": forecast,
+        "总客流": total_daily,
+    }

@@ -28,17 +28,66 @@ def visit_recent(limit: int = Query(20, ge=1, le=200)):
 
 @router.get("/visitor/{visitor_id}")
 def visitor_profile(visitor_id: int):
+    """查询游客 HBase 实时画像；不存在时回退 MySQL 历史数据"""
     data = hbase_svc.visitor_profile(visitor_id)
     if data is None:
-        raise HTTPException(404, f"visitor {visitor_id} not found in HBase")
+        # Fallback: 从 MySQL 取历史数据，标记 source 为 mysql
+        from services.mysql_service import visitor_aggregate
+        v = visitor_aggregate(visitor_id)
+        if v is None:
+            raise HTTPException(404, f"visitor {visitor_id} not found")
+        total_consume = v.get("总消费", 0)
+        consume_count = v.get("消费笔数", 0)
+        avg_consume = total_consume / max(consume_count, 1)
+        total_duration = v.get("总游玩时长", 0)
+        visit_count = v.get("游玩次数", 0)
+        avg_duration = total_duration / max(visit_count, 1)
+        return {
+            "source": "mysql_fallback",
+            "note": "HBase 中无此游客实时画像，返回 MySQL 历史聚合数据",
+            "data": {
+                "visitor_id": str(visitor_id),
+                "total_visits": visit_count,
+                "last_attraction": "",
+                "last_visit_time": "",
+                "recent_actions": [],
+                "from_mysql": True,
+                "消费总额": float(total_consume),
+                "消费笔数": consume_count,
+                "平均消费": round(avg_consume, 2),
+                "平均游玩时长": round(avg_duration, 2),
+            },
+        }
     return {"source": "hbase", "data": data}
 
 
 @router.get("/attraction/{attraction_id}")
 def attraction_stat(attraction_id: int):
+    """查询景点 HBase 实时统计；不存在时回退 MySQL"""
     data = hbase_svc.attraction_stat(attraction_id)
     if data is None:
-        raise HTTPException(404, f"attraction {attraction_id} not found in HBase")
+        from services.mysql_service import query
+        rows = query("SELECT 景点ID, 景点名称, 类型 FROM t_attraction WHERE 景点ID = %s", (str(attraction_id),))
+        if not rows:
+            raise HTTPException(404, f"attraction {attraction_id} not found")
+        # MySQL 聚合
+        from services.mysql_service import _query_df
+        df = _query_df("SELECT COUNT(DISTINCT 游客ID) AS visitors, COUNT(*) AS visits, AVG(游玩时长) AS avg_duration FROM t_visit_record WHERE 景点ID = %s", (str(attraction_id),))
+        if df.empty:
+            return {"source": "mysql_fallback", "data": {"scenic_id": str(attraction_id), "name": rows[0].get("景点名称"), "type": rows[0].get("类型"), "visitor_count": 0, "visit_count": 0, "avg_duration": 0}}
+        r = df.iloc[0]
+        return {
+            "source": "mysql_fallback",
+            "note": "HBase 中无此景点实时数据，返回 MySQL 历史聚合",
+            "data": {
+                "scenic_id": str(attraction_id),
+                "name": rows[0].get("景点名称"),
+                "type": rows[0].get("类型"),
+                "visitor_count": int(r["visitors"] or 0),
+                "visit_count": int(r["visits"] or 0),
+                "avg_duration": round(float(r["avg_duration"] or 0), 2),
+            },
+        }
     return {"source": "hbase", "data": data}
 
 
@@ -126,6 +175,14 @@ def kafka_status():
         "consumer": kconsumer.get_status(),
         "now":      datetime.utcnow().isoformat() + "Z",
     }
+
+
+@router.post("/hbase/clear")
+def hbase_clear():
+    """清空 HBase scenic_realtime 表（用于演示重置）"""
+    import services.hbase_service as hbase_svc
+    deleted = hbase_svc.clear_realtime_table()
+    return {"status": "ok", "deleted": deleted, "note": "HBase scenic_realtime 已清空"}
 
 
 class TaskTriggerIn(BaseModel):

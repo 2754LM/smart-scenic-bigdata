@@ -138,15 +138,22 @@ def type_summary() -> List[Dict[str, Any]]:
 
 
 def fpgrowth_rules() -> List[Dict[str, Any]]:
-    """从 Spark FPGrowth 训练结果读关联规则（/shared/models/fpgrowth_rules.json）"""
+    """从 Spark FPGrowth 训练结果读关联规则（/shared/models/fpgrowth_rules.json）
+    优先取简单规则（|a|<=2, |c|<=2），按 lift 降序。
+    """
     import json
     from pathlib import Path
     p = Path("/shared/models/fpgrowth_rules.json")
     if p.exists():
         with open(p, "r", encoding="utf-8") as f:
             rules = json.load(f)
+        # 优先返回简单规则（antecedent 和 consequent 都 <= 2 项）
+        simple = [r for r in rules if len(r.get("antecedent", [])) <= 2 and len(r.get("consequent", [])) <= 2]
+        simple.sort(key=lambda r: r.get("lift", 0), reverse=True)
+        if len(simple) >= 10:
+            return simple[:20]
         rules.sort(key=lambda r: r.get("lift", 0), reverse=True)
-        return rules[:30]
+        return rules[:20]
     return [
         {"antecedent": [{"景点ID": 1, "景点名称": "自然"}], "consequent": [{"景点ID": 2, "景点名称": "娱乐"}], "confidence": 0.62, "lift": 1.45, "support": 0.18},
         {"antecedent": [{"景点ID": 3, "景点名称": "文化"}], "consequent": [{"景点ID": 2, "景点名称": "娱乐"}], "confidence": 0.58, "lift": 1.36, "support": 0.16},

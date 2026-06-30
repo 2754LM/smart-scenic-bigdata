@@ -51,10 +51,11 @@
         <button class="btn" data-tab="visitors">游客</button>
         <button class="btn" data-tab="consumption">消费</button>
         <button class="btn" data-tab="visits">游玩</button>
-        <button class="btn" data-tab="realtime">⚡ 实时流 (Kafka→HBase)</button>
-        <button class="btn" data-tab="hbase">HBase 查询</button>
         <button class="btn" data-tab="system">系统管理</button>
       </div>
+      <p class="text-muted" style="font-size:12px; margin-top:8px">
+        💡 实时数据流 (Kafka → HBase) 已在 <a href="realtime.html" style="color:#00d4ff">实时流监控</a> 页面
+      </p>
     </div>
 
     <!-- 景点 -->
@@ -123,82 +124,7 @@
       </div>
     </div>
 
-    <!-- 实时流 (合并 Kafka 发布 + HBase 验证) -->
-    <div id="tab-realtime" class="tab-content" style="display:none">
-      <div class="card">
-        <div class="card-title">⚡ 实时数据流 <span class="subtitle">从前端发布事件 → Kafka → 后台 Consumer → HBase</span></div>
-
-        <!-- 数据流图 -->
-        <div class="flow-diagram">
-          <div class="flow-node"><div class="flow-node-icon">🌐</div><div class="flow-node-label">浏览器发布</div></div>
-          <div class="flow-arrow">→</div>
-          <div class="flow-node"><div class="flow-node-icon">📨</div><div class="flow-node-label">Kafka Topic</div></div>
-          <div class="flow-arrow">→</div>
-          <div class="flow-node"><div class="flow-node-icon">⚙️</div><div class="flow-node-label">Consumer 消费</div></div>
-          <div class="flow-arrow">→</div>
-          <div class="flow-node"><div class="flow-node-icon">💾</div><div class="flow-node-label">HBase 落库</div></div>
-          <div class="flow-arrow">→</div>
-          <div class="flow-node"><div class="flow-node-icon">🔍</div><div class="flow-node-label">前端查询</div></div>
-        </div>
-
-        <!-- 步骤 1: 触发任务 -->
-        <h3 style="color:#00d4ff; margin-top: 18px">① 生成测试数据</h3>
-        <p class="text-muted" style="font-size:12px; margin: 4px 0 10px">点下面的按钮，会自动生成 50 个事件发到 Kafka，并由后台 Consumer 写入 HBase</p>
-        <div class="form-row">
-          <label>任务类型:</label>
-          <select id="kafka-task-type" style="min-width:200px">
-            <option value="random_events">随机事件 (混合 enter/exit/consume/review)</option>
-            <option value="consume_burst">消费激增 (enter + consume + exit)</option>
-            <option value="review_flood">评论刷屏 (大量 review)</option>
-          </select>
-          <label>事件数:</label>
-          <input type="number" id="kafka-task-count" min="1" max="500" value="50" style="width:80px" />
-          <label>景点 ID:</label>
-          <input type="number" id="kafka-task-aid" min="1" max="10" placeholder="随机" style="width:80px" />
-          <button class="btn btn-primary" id="kafka-task-trigger">⚡ 触发任务</button>
-        </div>
-        <div id="kafka-task-result" style="margin-top:8px"></div>
-
-        <!-- 步骤 2: 查看 HBase 数据 -->
-        <h3 style="color:#00d4ff; margin-top: 24px">② 验证 HBase 已落库</h3>
-        <p class="text-muted" style="font-size:12px; margin: 4px 0 10px">触发任务后等待 2-3 秒，刷新下方区域，可以看到 Consumer 写入 HBase 的最新数据</p>
-        <div class="form-row">
-          <label>查询类型:</label>
-          <select id="hb-type">
-            <option value="recent">最近 20 条事件</option>
-            <option value="visitor">游客画像 (输入 ID)</option>
-            <option value="attraction">景点统计 (输入 ID)</option>
-          </select>
-          <label>ID:</label>
-          <input type="number" id="hb-id" style="width:150px" placeholder="可选" />
-          <button class="btn btn-primary" id="hb-search">查询</button>
-          <button class="btn" id="hb-refresh">🔄 自动刷新 (3秒/次)</button>
-        </div>
-        <div class="card-body" id="hbase-result"></div>
-
-        <!-- 步骤 3: Kafka 状态 -->
-        <h3 style="color:#00d4ff; margin-top: 24px">③ Kafka 引擎状态</h3>
-        <pre id="kafka-status" style="background:#0a0e27; color:#e0e6ed; padding:10px; border-radius:4px; overflow:auto; max-height:200px; border:1px solid #2a3b6e">加载中...</pre>
-      </div>
-    </div>
-
-    <!-- HBase 单独查询 -->
-    <div id="tab-hbase" class="tab-content" style="display:none">
-      <div class="card">
-        <div class="card-title">HBase 历史数据查询</div>
-        <div class="form-row">
-          <label>查询类型:</label>
-          <select id="hb2-type">
-            <option value="visitor">游客画像 (V+8位ID)</option>
-            <option value="attraction">景点统计 (A+4位ID)</option>
-          </select>
-          <label>ID:</label>
-          <input type="number" id="hb2-id" style="width:150px" />
-          <button class="btn btn-primary" id="hb2-search">查询</button>
-        </div>
-        <div class="card-body" id="hbase2-result"></div>
-      </div>
-    </div>
+    <!-- 实时流已迁移到 realtime.html -->
 
     <!-- 系统管理 -->
     <div id="tab-system" class="tab-content" style="display:none">

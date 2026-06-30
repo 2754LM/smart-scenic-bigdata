@@ -50,6 +50,7 @@ function renderHeader(active) {
     { key: 'overview',  href: 'index.html',    label: '总览大屏' },
     { key: 'analysis',  href: 'analysis.html', label: '数据分析' },
     { key: 'predict',   href: 'predict.html',  label: '模型预测' },
+    { key: 'realtime',  href: 'realtime.html', label: '⚡ 实时流' },
     { key: 'manage',    href: 'manage.html',   label: '业务管理' },
   ];
   return `

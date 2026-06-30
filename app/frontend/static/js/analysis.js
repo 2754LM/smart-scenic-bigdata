@@ -155,30 +155,61 @@ async function loadFpGrowth() {
   const el = document.getElementById('table-fpgrowth');
   renderLoading(el);
   try {
-    const r = await API.analysisFpGrowth();
-    const data = r.data || [];
-    if (!data.length) { renderEmpty(el, '暂无关联规则（请先跑 Spark FPGrowth 关联规则分析）'); return; }
-    el.innerHTML = `
-      <table>
-        <thead><tr>
-          <th>前项</th><th>→</th><th>后项</th>
-          <th>置信度</th><th>提升度</th><th>支持度</th>
-        </tr></thead>
-        <tbody>
-          ${data.map(r => {
-            const ant = (r.antecedent || []).map(a => `<span class="badge badge-blue">${escapeHtml(a.景点名称)}</span>`).join(' ');
-            const con = (r.consequent || []).map(c => `<span class="badge badge-green">${escapeHtml(c.景点名称)}</span>`).join(' ');
-            return `<tr>
-              <td>${ant}</td><td>→</td><td>${con}</td>
-              <td><span class="text-accent">${fmt(r.confidence, 3)}</span></td>
-              <td>${fmt(r.lift, 2)}</td>
-              <td>${fmt(r.support, 4)}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
-  } catch (e) { renderError(el, '加载失败'); }
+    const r = await API.tourismFpgrowthSankey(20);
+    if (r.error) { renderEmpty(el, r.error); return; }
+    const nodes = r.nodes || [];
+    const links = r.links || [];
+    if (!nodes.length || !links.length) { renderEmpty(el, '暂无关联规则'); return; }
+
+    // 用 ECharts Sankey 显示
+    el.innerHTML = `<div id="sankey-fpgrowth" style="height: 380px"></div>
+      <div style="margin-top: 8px; font-size: 12px; color: #9ca3af">
+        💡 解读：节点代表景点，连线粗细表示关联强度（lift × support），颜色按景点类型着色
+      </div>`;
+    const chart = echarts.init(document.getElementById('sankey-fpgrowth'));
+
+    // 颜色按类型
+    const typeColors = { '文化': '#3b82f6', '娱乐': '#ec4899', '自然': '#10b981', '运动': '#f59e0b' };
+    const nodeData = nodes.map(n => ({
+      name: n.name,
+      itemStyle: { color: typeColors[n.type] || '#6c7a96', borderColor: '#0a0e27', borderWidth: 2 },
+    }));
+    const linkData = links.map(l => {
+      const fromNode = nodes.find(n => n['景点ID'] === l.from);
+      const toNode = nodes.find(n => n['景点ID'] === l.to);
+      return {
+        source: fromNode?.name || l.from,
+        target: toNode?.name || l.to,
+        value: l.value * 1000,  // 放大到合理显示
+      };
+    });
+
+    chart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(20,30,60,0.95)', borderColor: '#00d4ff',
+        textStyle: { color: '#fff' },
+        formatter: (p) => {
+          if (p.dataType === 'edge') {
+            return `${p.data.source} → ${p.data.target}<br/>强度: ${(p.data.value / 1000).toFixed(4)}`;
+          }
+          return p.name;
+        },
+      },
+      series: [{
+        type: 'sankey',
+        data: nodeData,
+        links: linkData,
+        emphasis: { focus: 'adjacency' },
+        lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.6 },
+        label: { color: '#e0e6ed', fontSize: 11 },
+        nodeWidth: 20,
+        nodeGap: 12,
+      }],
+    });
+    window.addEventListener('resize', () => chart.resize());
+  } catch (e) { renderError(el, '加载失败: ' + e.message); }
 }
 
 window.addEventListener('resize', () => {

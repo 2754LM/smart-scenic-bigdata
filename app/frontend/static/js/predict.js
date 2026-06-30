@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAttractionOptions();
   // 客流预测（默认加载）
   await loadForecast();
+  // 多日预测
+  await loadMultiDay();
   // 模型对比
   await Promise.all([
     loadRegressionTable(),
@@ -23,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-route').addEventListener('click', loadRoute);
   document.getElementById('btn-profile').addEventListener('click', loadProfile);
   document.getElementById('btn-compare').addEventListener('click', loadCompareChart);
+  document.getElementById('btn-multi').addEventListener('click', loadMultiDay);
 });
 
 // ============================================================
@@ -97,6 +100,64 @@ async function loadForecast() {
         <div style="text-align:right; min-width:90px">
           <div style="color:#fff">${d.预测明日} 人</div>
           <div style="color:${changeColor}; font-size:11px">${arrow} ${Math.abs(change)}%</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { renderError(el, '加载失败: ' + e.message); }
+}
+
+// ============================================================
+// 1.5 多日客流预测
+// ============================================================
+async function loadMultiDay() {
+  const el = document.getElementById('chart-multi-total');
+  const listEl = document.getElementById('multi-list');
+  const days = parseInt(document.getElementById('multi-days').value);
+  renderLoading(el);
+  listEl.innerHTML = '<span class="text-muted">加载中...</span>';
+  try {
+    const r = await API.tourismMultiDayForecast(days);
+    if (r.error) { renderError(el, r.error); return; }
+    const total = r.总客流 || [];
+    const items = r.景点预测 || [];
+    if (!total.length) { renderEmpty(el, '暂无数据'); return; }
+
+    // 主图：每日总客流
+    const chart = echarts.init(el);
+    chart.setOption({
+      backgroundColor: 'transparent',
+      title: { text: `未来 ${days} 天全景区总客流预测`, textStyle: { color: '#e0e6ed', fontSize: 13 }, left: 10, top: 5 },
+      tooltip: { trigger: 'axis', backgroundColor: 'rgba(20,30,60,0.95)', borderColor: '#00d4ff', textStyle: { color: '#fff' } },
+      grid: { left: 50, right: 50, top: 50, bottom: 60 },
+      xAxis: {
+        type: 'category', data: total.map(d => d.date.substring(5)),
+        axisLabel: { color: '#b0c4de', fontSize: 10, rotate: 30 },
+        axisLine: { lineStyle: { color: '#2a3b6e' } },
+      },
+      yAxis: { type: 'value', axisLabel: { color: '#6c7a96' }, splitLine: { lineStyle: { color: '#1e2a4a' } } },
+      series: [{
+        name: '总客流', type: 'bar', data: total.map(d => d.total_visitors),
+        itemStyle: {
+          color: (params) => total[params.dataIndex]?.is_weekend ? '#a855f7' : '#00d4ff',
+          borderRadius: [4, 4, 0, 0],
+        },
+        label: { show: true, position: 'top', color: '#b0c4de', fontSize: 10, formatter: '{c}' },
+      }],
+    });
+    window.addEventListener('resize', () => chart.resize());
+
+    // 列表
+    listEl.innerHTML = items.map(f => {
+      const totalN = f[`未来${days}天总计`];
+      const avgN = f[`未来${days}天日均`];
+      return `<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom: 1px dashed #2a3b6e">
+        <div style="flex:1">
+          <span class="tag tag-blue">${escapeHtml(f.景点名称)}</span>
+          <span style="color:#9ca3af; font-size:11px">${f.类型 || ''}</span>
+        </div>
+        <div style="text-align:right; min-width:90px">
+          <div style="color:#fff">${fmtInt(totalN)} 人</div>
+          <div style="color:#9ca3af; font-size:11px">日均 ${fmt(avgN, 1)}</div>
         </div>
       </div>`;
     }).join('');
@@ -265,14 +326,16 @@ async function loadRegressionTable() {
     const r = await API.predictRegression();
     const results = (r.data && r.data.results) || [];
     if (!results.length) { renderEmpty(el, '暂无'); return; }
+    const nameMap = { linear: 'Linear', lasso: 'Lasso', ridge: 'Ridge', rf: 'RandomForest' };
     el.innerHTML = `
-      <div style="color:#00d4ff; font-size:12px; margin-bottom:6px">回归模型 (R²)</div>
+      <div style="color:#00d4ff; font-size:12px; margin-bottom:4px">📈 回归模型对比</div>
+      <div style="color:#9ca3af; font-size:10px; margin-bottom:6px">预测目标: <span class="text-accent">游客消费总额 (¥)</span></div>
       <table>
         <thead><tr><th>模型</th><th>RMSE</th><th>R²</th></tr></thead>
         <tbody>
           ${results.map(x => `<tr>
-            <td>${escapeHtml(x.model)}</td>
-            <td>${fmt(x.rmse, 4)}</td>
+            <td>${escapeHtml(nameMap[x.model] || x.model)}</td>
+            <td>${fmt(x.rmse, 2)}</td>
             <td><span class="text-accent">${fmt(x.r2, 4)}</span></td>
           </tr>`).join('')}
         </tbody>
@@ -288,15 +351,18 @@ async function loadClassificationTable() {
     const r = await API.predictClassification();
     const rows = (r.data && r.data.results) || [];
     if (!rows.length) { renderEmpty(el, '暂无'); return; }
+    const nameMap = { rf: 'RandomForest', dt: 'DecisionTree', gbt: 'GBT', lr: 'LogisticReg' };
     el.innerHTML = `
-      <div style="color:#a855f7; font-size:12px; margin-bottom:6px">分类模型 (高价值游客)</div>
+      <div style="color:#a855f7; font-size:12px; margin-bottom:4px">🎯 分类模型对比</div>
+      <div style="color:#9ca3af; font-size:10px; margin-bottom:6px">预测目标: <span class="text-accent">是否高价值游客 (消费>500)</span></div>
       <table>
-        <thead><tr><th>模型</th><th>Acc</th><th>F1</th></tr></thead>
+        <thead><tr><th>模型</th><th>Acc</th><th>F1</th><th>AUC</th></tr></thead>
         <tbody>
           ${rows.map(x => `<tr>
-            <td>${escapeHtml(x.model)}</td>
+            <td>${escapeHtml(nameMap[x.model] || x.model)}</td>
             <td><span class="text-accent">${fmt(x.accuracy, 4)}</span></td>
             <td>${fmt(x.f1, 4)}</td>
+            <td>${fmt(x.auc || 0, 4)}</td>
           </tr>`).join('')}
         </tbody>
       </table>
