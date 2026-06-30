@@ -47,3 +47,22 @@ def clustering():
 @router.get("/compare")
 def compare():
     return {"source": "sklearn", "data": model_svc.compare_models()}
+
+
+@router.get("/status")
+def status():
+    """模型仓库状态（已加载 / HDFS 持久化 / 待重训）。"""
+    return model_svc.models_status()
+
+
+@router.post("/retrain")
+def retrain():
+    """强制重新训练 + 持久化到 HDFS。"""
+    import services.model_service as model_svc_mod
+    model_svc_mod._TRAINED = False
+    model_svc_mod._MODELS.clear()
+    model_svc_mod._REGRESSION_REPORT.clear()
+    model_svc_mod._CLASSIFICATION_REPORT.clear()
+    model_svc_mod._CLUSTER_REPORT.clear()
+    st = model_svc_mod.ensure_models()
+    return {"status": "ok", "result": st}

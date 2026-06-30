@@ -65,6 +65,79 @@ def hdfs_cat(path: str, n: int = 5) -> List[str]:
     return [ln for ln in out.splitlines() if ln]
 
 
+def hdfs_put(local_path: str, hdfs_path: str, timeout: int = 60) -> bool:
+    """Upload a local file to HDFS via `hdfs dfs -put`.
+
+    容器里的 hadoop 客户端会从 hadoop-namenode 写入 NameNode RPC
+    （见 docker-compose.yml 端口映射 19000）。
+    """
+    # 容器里的 hadoop 客户端看不到 host 的本地路径，
+    # 所以我们走 docker cp 中转：先 cp 到 hadoop-namenode:/tmp，再 -put
+    container = config.HADOOP_CONTAINER
+    basename = os.path.basename(local_path)
+    cp = subprocess.run(
+        ["docker", "cp", local_path, f"{container}:/tmp/{basename}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if cp.returncode != 0:
+        log.warning("hdfs_put: docker cp failed: %s", cp.stderr[:200])
+        return False
+    cmd = (
+        "export JAVA_HOME=/opt/jdk8 && export HADOOP_HOME=/opt/hadoop && "
+        "export PATH=$JAVA_HOME/bin:$HADOOP_HOME/bin:$PATH && "
+        f"mkdir -p $(dirname {hdfs_path}) && "
+        f"hdfs dfs -put -f /tmp/{basename} {hdfs_path} && "
+        f"rm /tmp/{basename}"
+    )
+    r = subprocess.run(
+        ["docker", "exec", container, "sh", "-c", cmd],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    return r.returncode == 0
+
+
+def hdfs_get(hdfs_path: str, local_path: str, timeout: int = 60) -> bool:
+    """Download a file from HDFS to a local path via `hdfs dfs -get`."""
+    container = config.HADOOP_CONTAINER
+    basename = os.path.basename(hdfs_path)
+    cmd = (
+        "export JAVA_HOME=/opt/jdk8 && export HADOOP_HOME=/opt/hadoop && "
+        "export PATH=$JAVA_HOME/bin:$HADOOP_HOME/bin:$PATH && "
+        f"hdfs dfs -get {hdfs_path} /tmp/{basename} && "
+        f"chmod 666 /tmp/{basename}"
+    )
+    r = subprocess.run(
+        ["docker", "exec", container, "sh", "-c", cmd],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if r.returncode != 0:
+        log.warning("hdfs_get: hdfs -get failed: %s", r.stderr[:200])
+        return False
+    cp = subprocess.run(
+        ["docker", "cp", f"{container}:/tmp/{basename}", local_path],
+        capture_output=True, text=True, timeout=30,
+    )
+    subprocess.run(
+        ["docker", "exec", container, "rm", "-f", f"/tmp/{basename}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    return cp.returncode == 0
+
+
+def hdfs_exists(path: str) -> bool:
+    """Check if HDFS path exists (`hdfs dfs -test -e`)."""
+    cmd = (
+        "export JAVA_HOME=/opt/jdk8 && export HADOOP_HOME=/opt/hadoop && "
+        "export PATH=$JAVA_HOME/bin:$HADOOP_HOME/bin:$PATH && "
+        f"hdfs dfs -test -e {path}"
+    )
+    r = subprocess.run(
+        ["docker", "exec", config.HADOOP_CONTAINER, "sh", "-c", cmd],
+        capture_output=True, text=True, timeout=15,
+    )
+    return r.returncode == 0
+
+
 def hbase_shell(commands: str, timeout: int = 30) -> str:
     """Run hbase shell commands via docker exec, returns the combined stdout.
 

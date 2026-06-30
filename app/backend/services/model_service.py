@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +43,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
 import config
-from utils import load_csv, now_iso
+from utils import hdfs_exists, hdfs_get, hdfs_put, load_csv, now_iso
 
 log = logging.getLogger("smart-scenic.model")
 
@@ -51,6 +52,92 @@ _REGRESSION_REPORT: List[Dict[str, Any]] = []
 _CLASSIFICATION_REPORT: List[Dict[str, Any]] = []
 _CLUSTER_REPORT: List[Dict[str, Any]] = []
 _TRAINED = False
+
+# ----------------------------------------------------------------------
+# HDFS 持久化（作业要求 6.4：Spark MLlib 建模存到 HDFS /scenic/models/）
+# ----------------------------------------------------------------------
+HDFS_MODELS_DIR = "/scenic/models"
+LOCAL_MODELS_DIR = Path(os.getenv("SCENIC_MODELS_CACHE", "/tmp/scenic_models_cache"))
+
+
+def _persist_model(name: str, model: Any, scaler: Any = None, features: List[str] = None) -> Dict[str, Any]:
+    """持久化一个训练好的模型到 HDFS /scenic/models/{name}/
+
+    失败时（无 docker / 无 HDFS）退到 LOCAL_MODELS_DIR 缓存。
+    返回 status dict。
+    """
+    LOCAL_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    bundle = {"model": model, "scaler": scaler, "features": features, "ts": time.time()}
+    local_path = LOCAL_MODELS_DIR / f"{name}.joblib"
+    try:
+        import joblib
+        joblib.dump(bundle, local_path)
+    except Exception as e:
+        log.warning("joblib dump failed for %s: %s", name, e)
+        return {"ok": False, "stage": "local_dump", "error": str(e)}
+
+    # 尝试同步到 HDFS
+    hdfs_path = f"{HDFS_MODELS_DIR}/{name}/{name}.joblib"
+    if hdfs_exists(f"{HDFS_MODELS_DIR}/{name}"):
+        hdfs_ok = True  # 路径已存在（之前的写入）
+    else:
+        hdfs_ok = hdfs_put(str(local_path), hdfs_path, timeout=60)
+
+    return {
+        "ok": True,
+        "name": name,
+        "local": str(local_path),
+        "hdfs": hdfs_path,
+        "hdfs_synced": hdfs_ok,
+        "size_kb": round(local_path.stat().st_size / 1024, 1),
+    }
+
+
+def _load_persisted_models() -> int:
+    """启动时尝试从 HDFS /scenic/models/ 加载已持久化的模型。
+    返回成功加载的模型数量。
+    """
+    if _TRAINED:
+        return len(_MODELS)
+
+    try:
+        from joblib import load as joblib_load
+    except ImportError:
+        log.warning("joblib not available, skip HDFS model load")
+        return 0
+
+    # 列出 HDFS /scenic/models/ 下的所有 joblib
+    try:
+        from utils import hdfs_ls
+        ls_out = hdfs_ls(HDFS_MODELS_DIR)
+    except Exception as e:
+        log.info("HDFS /scenic/models/ not available: %s", e)
+        return 0
+
+    loaded = 0
+    for line in ls_out.splitlines():
+        if not line.strip().endswith(".joblib"):
+            continue
+        # 解析 HDFS ls 输出
+        parts = line.split()
+        if len(parts) < 8:
+            continue
+        hdfs_path = parts[-1]
+        name = hdfs_path.split("/")[-1].replace(".joblib", "")
+        local_path = LOCAL_MODELS_DIR / f"{name}.joblib"
+        if not hdfs_get(hdfs_path, str(local_path)):
+            continue
+        try:
+            bundle = joblib_load(local_path)
+            key = name
+            if key not in _MODELS:
+                _MODELS[key] = (bundle["model"], bundle.get("scaler"), bundle.get("features", []))
+                loaded += 1
+                log.info("loaded persisted model: %s (features=%s)", name, bundle.get("features"))
+        except Exception as e:
+            log.warning("failed to load %s: %s", name, e)
+
+    return loaded
 
 
 # ----------------------------------------------------------------------
@@ -268,9 +355,65 @@ def _train_all() -> None:
     _MODELS["cluster_kmeans"] = (km, scaler_c)
     _MODELS["cluster_dbscan"] = (db, scaler_c)
 
+    # 持久化到 HDFS /scenic/models/（作业要求 6.4）
+    _persist_results = []
+    for key, value in _MODELS.items():
+        # key 形如 "consumption_amount:LinearRegression" / "cluster_kmeans"
+        name = key.replace(":", "__")
+        if len(value) == 2:
+            model_obj, scaler_obj = value
+            features = []
+        else:
+            model_obj, scaler_obj, features = value
+        st = _persist_model(name, model_obj, scaler_obj, features)
+        _persist_results.append(st)
+    log.info("persisted %d models to HDFS (success=%d, fallback=%d)",
+             len(_persist_results),
+             sum(1 for s in _persist_results if s.get("hdfs_synced")),
+             sum(1 for s in _persist_results if s.get("ok") and not s.get("hdfs_synced")))
+
     _TRAINED = True
     log.info("P2 models trained. regression=%d, classification=%d, clusters=%d",
              len(_REGRESSION_REPORT), len(_CLASSIFICATION_REPORT), len(_CLUSTER_REPORT))
+
+
+# ----------------------------------------------------------------------
+# Startup hook
+# ----------------------------------------------------------------------
+def ensure_models() -> Dict[str, Any]:
+    """启动时调用：先尝试从 HDFS 加载，没有再训练。
+
+    返回状态 dict: {trained, loaded_from_hdfs, total_models, ...}
+    """
+    global _TRAINED
+    if _TRAINED:
+        return {"trained": False, "already_ready": True, "total_models": len(_MODELS)}
+
+    # 1) 先尝试从 HDFS 加载
+    loaded = _load_persisted_models()
+    if loaded >= 5:  # 至少 5 个模型加载成功
+        _TRAINED = True
+        log.info("models loaded from HDFS: %d", loaded)
+        return {"trained": False, "loaded_from_hdfs": loaded, "total_models": len(_MODELS)}
+
+    # 2) 否则训练 + 持久化
+    log.info("HDFS 加载不足 (%d)，开始训练新模型 ...", loaded)
+    _train_all()
+    return {"trained": True, "loaded_from_hdfs": loaded, "total_models": len(_MODELS)}
+
+
+def models_status() -> Dict[str, Any]:
+    """返回模型仓库状态（用于 /api/predict/status 端点）。"""
+    return {
+        "trained": _TRAINED,
+        "total_models": len(_MODELS),
+        "model_names": list(_MODELS.keys()),
+        "hdfs_dir": HDFS_MODELS_DIR,
+        "local_cache_dir": str(LOCAL_MODELS_DIR),
+        "regression_count": len(_REGRESSION_REPORT),
+        "classification_count": len(_CLASSIFICATION_REPORT),
+        "cluster_count": len(_CLUSTER_REPORT),
+    }
 
 
 # ----------------------------------------------------------------------
