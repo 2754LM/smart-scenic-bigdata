@@ -88,14 +88,6 @@ const API = {
   tourismMultiDayForecast: (days=7) => api(`/api/predict-tourism/multi-day-forecast?days=${days}`),
   tourismFpgrowthSankey: (limit=20) => api(`/api/predict-tourism/fpgrowth-sankey?limit=${limit}`),
 
-  // 实时数据
-  visitRecent:        (limit=20) => api(`/api/realtime/visit-recent?limit=${limit}`),
-  visitorProfile:     (id)    => api(`/api/realtime/visitor/${id}`),
-  attractionStat:     (id)    => api(`/api/realtime/attraction/${id}`),
-  publishReview:      (body)  => api('/api/realtime/publish/review', { method: 'POST', body }),
-  publishEvent:       (body)  => api('/api/realtime/publish/event',  { method: 'POST', body }),
-  kafkaStatus:        ()      => api('/api/realtime/kafka/status'),
-
   // 系统管理
   adminStatus:        ()      => api('/api/admin/status'),
   adminContainers:    ()      => api('/api/admin/containers'),

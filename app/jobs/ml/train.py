@@ -62,7 +62,9 @@ SHARED_MODEL = "/shared/models"
 SKLEARN_OUT = "/shared/models/sklearn"   # demo-backend 用 joblib.load 这里
 
 FEATURE_COLS = ["age", "avg_duration", "unique_attractions"]
+REGRESSION_FEATURE_COLS = FEATURE_COLS  # all 3 tasks use same 3 features (no data leakage)
 CLASS_LABEL = "is_repeat_visitor"
+REGRESSION_LABEL = "total_amount"
 
 
 # ============== 1. 数据 ==============

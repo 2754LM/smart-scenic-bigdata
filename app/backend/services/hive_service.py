@@ -231,13 +231,15 @@ def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[
     daily = daily.dropna(subset=["d"])
     if daily.empty:
         return {"results": [], "split_date": split_date, "model": "regression_ridge"}
-    daily["purchase_count"] = (pd.to_numeric(daily["actual_amount"], errors="coerce").fillna(0) / 100).round()
-    daily["avg_amount"] = 100.0
-    daily["visit_count"] = (pd.to_numeric(daily["actual_amount"], errors="coerce").fillna(0) / 80).round()
+    # Fill 3-model features with reasonable defaults for daily aggregates.
+    # (real per-day aggregates over visitors would require a second aggregation query)
+    daily["age"] = 30
     daily["avg_duration"] = 2.5
     daily["unique_attractions"] = 5
-    daily["age"] = 30
-    feature_order = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
+    feature_order = ["age", "avg_duration", "unique_attractions"]
+
+
+
     X = daily[feature_order].astype(float).values
     daily["predicted"] = model.predict(X)
     daily["is_test"] = (daily["d"] >= pd.Timestamp(split_date)).astype(int)
@@ -248,8 +250,9 @@ def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[
                 "actual_amount": float(r["actual_amount"] or 0),
                 "predicted_amount": float(round(r["predicted"], 2)),
                 "is_test": int(r["is_test"]),
-                "purchase_count": int(r.get("purchase_count", 0)),
-                "visit_count": int(r.get("visit_count", 0)),
+                "age": int(r["age"]),
+                "avg_duration": float(r["avg_duration"]),
+                "unique_attractions": int(r["unique_attractions"]),
             }
             for _, r in daily.iterrows()
         ],

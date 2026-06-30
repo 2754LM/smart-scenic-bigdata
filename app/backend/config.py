@@ -40,13 +40,6 @@ MYSQL_CONFIG = {
 }
 
 # ----------------------------------------------------------------------
-# Kafka
-# ----------------------------------------------------------------------
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:19095")
-KAFKA_TOPIC_REVIEW = os.getenv("KAFKA_TOPIC_REVIEW", "scenic_reviews")
-KAFKA_TOPIC_EVENTS = os.getenv("KAFKA_TOPIC_EVENTS", "scenic_events")
-
-# ----------------------------------------------------------------------
 # HBase (use docker exec since happybase protocol is broken in our env)
 # ----------------------------------------------------------------------
 HBASE_CONTAINER = os.getenv("HBASE_CONTAINER", "hbase-master")

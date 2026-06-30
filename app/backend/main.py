@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse
 
 import config
 import services.hbase_service as hbase_svc
-from routers import admin, analysis, attractions, consumption, overview, predict, predict_tourism, realtime, visitors
+from routers import admin, analysis, attractions, consumption, overview, predict, predict_tourism, visitors
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +54,6 @@ app.include_router(consumption.router)
 app.include_router(analysis.router)
 app.include_router(predict.router)
 app.include_router(predict_tourism.router)
-app.include_router(realtime.router)
 app.include_router(admin.router)
 
 
@@ -87,24 +86,10 @@ def on_startup() -> None:
     except Exception as e:
         log.warning("ML auto-train init failed: %s", e)
 
-    # === Kafka 后台 consumer：消费 → 写 HBase ===
-    try:
-        from services import kafka_consumer
-        kafka_consumer.start()
-        log.info("Kafka consumer thread started")
-    except Exception as e:
-        log.warning("Kafka consumer start failed: %s", e)
-
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
-    """关停 Kafka consumer 线程"""
-    try:
-        from services import kafka_consumer
-        kafka_consumer.stop()
-        log.info("Kafka consumer thread stopped")
-    except Exception as e:
-        log.warning("Kafka consumer stop failed: %s", e)
+    """FastAPI shutdown hook. No background threads to stop."""
 
 
 @app.get("/api/predict/_engine")

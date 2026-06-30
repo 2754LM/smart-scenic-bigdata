@@ -401,7 +401,7 @@ def trigger_pipeline(actions: List[str]) -> Job:
 # 状态查询
 # ============================================================
 def get_containers_status() -> List[Dict[str, Any]]:
-    """List all 17 containers via Docker socket API (no docker CLI needed)"""
+    """List all 15 containers via Docker socket API (no docker CLI needed)"""
     try:
         from services.docker_client import list_containers
         containers = list_containers(all=True)
@@ -541,9 +541,6 @@ def get_system_status() -> Dict[str, Any]:
         "models":  get_models_status(),
         "datasets": get_datasets_status(),
         "hdfs":    get_hdfs_status(),
-        "kafka":   {
-            "topics": ["scenic_reviews", "scenic_events"],
-        },
         "jobs":    [j.to_dict() for j in list_jobs(limit=10)],
         "actions": [{"name": k, "label": v[0]} for k, v in ACTIONS.items()],
     }

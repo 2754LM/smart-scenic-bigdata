@@ -15,7 +15,7 @@ echo   Smart Scenic BigData - Stopping
 echo ==========================================================
 echo.
 
-echo Stopping 17 containers (data preserved)...
+echo Stopping 15 containers (data preserved)...
 docker compose down
 if errorlevel 1 (
     echo [WARN] docker compose down returned non-zero. Some containers may still be running.

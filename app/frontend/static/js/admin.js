@@ -55,7 +55,6 @@ async function refreshContainers() {
       '计算层':    ['hadoop-namenode', 'hadoop-datanode-1', 'hadoop-datanode-2',
                   'spark-master', 'spark-worker-1'],
       '存储 NoSQL': ['hbase-master', 'hbase-regionserver-1', 'hbase-regionserver-2'],
-      '消息队列':  ['kafka-1', 'kafka-2'],
       '数仓':      ['hive-server-1', 'hive-server-2'],
       '应用':      ['demo-backend'],
     };

@@ -21,8 +21,6 @@ volumes:
   hbase-master-data:
   hbase-rs1-data:
   hbase-rs2-data:
-  kafka1-data:
-  kafka2-data:
   hive-server1-data:
   hive-server2-data:
   shared-data:
@@ -433,76 +431,24 @@ services:
       start_period: 90s
 
   # ========================================================
-  # Kafka Cluster (KRaft mode, latest 镜像)
-  # 3.1.0 ZK mode 不在 docker hub 镜像源上，改用 KRaft 模式（latest）
-  kafka-1:
-    image: apache/kafka:${KAFKA_VERSION}
-    container_name: kafka-1
-    mem_limit: 1024m
-    hostname: kafka-1
-    restart: unless-stopped
-    ports:
-      - "${PORT_KAFKA}:9092"
-      - "${PORT_KAFKA_EXTERNAL}:9094"
-    environment:
-      KAFKA_NODE_ID: ${KAFKA_NODE_ID_1}
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-1:9092,EXTERNAL://localhost:19095"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    volumes:
-      - kafka1-data:/var/lib/kafka/data
-    networks:
-      - bigdata-net
-
-  kafka-2:
-    image: apache/kafka:${KAFKA_VERSION}
-    container_name: kafka-2
-    mem_limit: 1024m
-    hostname: kafka-2
-    restart: unless-stopped
-    depends_on:
-      - kafka-1
-    ports: []
-    environment:
-      KAFKA_NODE_ID: ${KAFKA_NODE_ID_2}
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-2:9092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    volumes:
-      - kafka2-data:/var/lib/kafka/data
-    networks:
-      - bigdata-net
-
-  # Spark Standalone Cluster: 1 Master + 1 Worker閿涘湏pache 鐎规ɑ鏌熼敍?  # ========================================================
   spark-master:
-    image: apache/spark:${SPARK_VERSION}
+    build:
+      context: ./docker/spark
+      dockerfile: Dockerfile
+    image: smart-scenic/spark:custom
     container_name: spark-master
-    mem_limit: 1024m
+    mem_limit: 1536m
     hostname: spark-master
     restart: unless-stopped
-    command: ["/bin/bash", "-c", "mkdir -p /tmp/spark-events && /opt/spark/sbin/start-master.sh && tail -f /dev/null"]
+    user: root
+    command: ["/usr/local/bin/entrypoint.sh"]  
     ports:
       - "${PORT_SPARK_WEB}:8080"
       - "${PORT_SPARK_RPC}:7077"
     environment:
       JAVA_HOME: /opt/java/openjdk
       SPARK_MASTER_HOST: spark-master
+      PYTHONUNBUFFERED: "1"
     volumes:
       - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./config/spark/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
@@ -513,19 +459,24 @@ services:
       - bigdata-net
 
   spark-worker-1:
-    image: apache/spark:${SPARK_VERSION}
+    build:
+      context: ./docker/spark
+      dockerfile: Dockerfile
+    image: smart-scenic/spark:custom
     container_name: spark-worker-1
-    mem_limit: 1280m
+    mem_limit: 1536m
     hostname: spark-worker-1
     restart: unless-stopped
     depends_on:
       - spark-master
-    command: ["/bin/bash", "-c", "mkdir -p /tmp/spark-events && /opt/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"]
+    user: root
+    command: ["/usr/local/bin/entrypoint.worker.sh"]  
     environment:
       JAVA_HOME: /opt/java/openjdk
       SPARK_WORKER_MEMORY: 1g
       SPARK_WORKER_CORES: 2
       SPARK_MASTER_URL: spark://spark-master:7077
+      PYTHONUNBUFFERED: "1"
     volumes:
       - ./config/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./config/spark/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
@@ -572,11 +523,9 @@ services:
       HADOOP_CONTAINER: hadoop-namenode
       HBASE_CONTAINER: hbase-master
       SPARK_CONTAINER: spark-master
-      KAFKA_BOOTSTRAP: "kafka-1:9092"
     depends_on:
       - mysql
       - hadoop-namenode
-      - kafka-1
     networks:
       - bigdata-net
 

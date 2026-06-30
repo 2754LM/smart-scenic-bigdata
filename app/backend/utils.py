@@ -66,11 +66,12 @@ def hdfs_cat(path: str, n: int = 5) -> List[str]:
 
 
 def hbase_shell(commands: str, timeout: int = 30) -> str:
-    """Run hbase shell commands via docker exec, returns the combined stdout.
+    """Run hbase shell commands via Docker socket API (no docker CLI needed).
 
     hbase shell -n never exits cleanly from a piped stdin, so we redirect
     the command set into a file inside the container and read the output file.
     """
+    from services.docker_client import exec_capture
     script = (
         "cat > /tmp/hbase-cmd.cmd << 'HBCMD'\n"
         + commands
@@ -86,7 +87,8 @@ def hbase_shell(commands: str, timeout: int = 30) -> str:
         "kill -9 $HB_PID 2>/dev/null\n"
         "cat /tmp/hbase-out.log\n"
     )
-    out = docker_exec(config.HBASE_CONTAINER, script, timeout=timeout)
+    r = exec_capture(config.HBASE_CONTAINER, ["sh", "-c", script], timeout=timeout)
+    out = r.get("stdout", "") or ""
     if "---HBASE_OUT_START---" in out:
         out = out.split("---HBASE_OUT_START---", 1)[1]
     return out

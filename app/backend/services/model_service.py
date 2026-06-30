@@ -58,21 +58,24 @@ _load_models()
 # ----------------------------------------------------------------------
 # 特征转换：把前端字段映射到 Spark 训练时的特征
 # ----------------------------------------------------------------------
-# 回归任务用 6 个特征 (预测消费总额)
-REGRESSION_FEATURES = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
-# 分类任务用 3 个特征 (是否高频回头客, 防止数据泄漏)
-CLASSIFICATION_FEATURES = ["age", "avg_duration", "unique_attractions"]
-# 聚类任务用 6 个特征
-CLUSTERING_FEATURES = REGRESSION_FEATURES
+# 所有任务统一使用 3 个特征 (age, avg_duration, unique_attractions) —
+# 回归 (预测消费)、聚类 (群体)、分类 (回头客) 都靠这 3 个 features.
+# 这是为了彻底避免数据泄漏 — 否则 high-value 标签可以直接从 total_amount 推出.
+# 见 app/jobs/ml/train.py 顶部注释.
+FEATURE_COLS = ["age", "avg_duration", "unique_attractions"]
+REGRESSION_FEATURES = FEATURE_COLS
+CLASSIFICATION_FEATURES = FEATURE_COLS
+CLUSTERING_FEATURES = FEATURE_COLS
 
 
 def _features_to_spark(task: str, f: Dict[str, Any]) -> np.ndarray:
     """
     把前端的任意字段映射到对应任务的特征:
-      - regression (消费金额/客流量): 6 个特征
-      - classification (回头客): 3 个特征 [age, avg_duration, unique_attractions]
-      - clustering: 6 个特征
-    返回 numpy array shape (1, n_features)
+      - regression: 3 features [age, avg_duration, unique_attractions]
+      - classification: 3 features (same)
+      - clustering: 3 features (same)
+    所有任务统一 3 个 feature, 避免数据泄漏 (high_value 可被 total_amount 推出).
+    返回 numpy array shape (1, 3)
     """
     if task in ("high_value_visitor",):
         keys = CLASSIFICATION_FEATURES
@@ -84,10 +87,7 @@ def _features_to_spark(task: str, f: Dict[str, Any]) -> np.ndarray:
         v = f.get(k)
         if v is None:
             # 兼容中文 key
-            alias = {"年龄": "age", "年龄_": "age",
-                     "购买次数": "purchase_count",
-                     "平均消费": "avg_amount",
-                     "游玩次数": "visit_count",
+            alias = {"年龄": "age",
                      "平均时长": "avg_duration",
                      "景点数": "unique_attractions"}.get(k)
             v = f.get(alias, 0) if alias else 0
@@ -199,16 +199,16 @@ def clustering_report() -> List[Dict[str, Any]]:
     if not rows:
         return []
 
-    feature_order = ["age", "purchase_count", "avg_amount", "visit_count", "avg_duration", "unique_attractions"]
-    # 构造特征矩阵（用每日平均值近似）
-    X = np.zeros((len(rows), 6))
+    feature_order = ["age", "avg_duration", "unique_attractions"]
+
+
+
+    # 构造 3-feature 矩阵 (年龄 / 平均游玩时长 / 去过的景点数近似)
+    X = np.zeros((len(rows), 3))
     for i, r in enumerate(rows):
-        X[i, 0] = r.get("age") or 30
-        X[i, 1] = r.get("consume_count") or 0
-        X[i, 2] = (r.get("total_consume") / max(r.get("consume_count") or 1, 1))
-        X[i, 3] = r.get("visit_count") or 0
-        X[i, 4] = (r.get("total_duration") / max(r.get("visit_count") or 1, 1))
-        X[i, 5] = 3  # 近似
+        X[i, 0] = r.get("age") or 30                            # age
+        X[i, 1] = (r.get("total_duration") / max(r.get("visit_count") or 1, 1))  # avg_duration
+        X[i, 2] = 3  # unique_attractions 近似 (无更精确的 query)
 
     km = _models["clustering_kmeans"]
     labels = km.predict(X)
@@ -223,10 +223,8 @@ def clustering_report() -> List[Dict[str, Any]]:
             "cluster": c,
             "n": n,
             "avg_age": round(float(X[mask, 0].mean()), 1),
-            "avg_total_consume": round(float(X[mask, 2].mean() * X[mask, 1].mean()), 0),  # avg_amount * purchase_count
-            "avg_per_consume": round(float(X[mask, 2].mean()), 1),
-            "avg_visit_count": round(float(X[mask, 3].mean()), 1),
-            "avg_duration_h": round(float(X[mask, 4].mean()), 2),
+            "avg_duration_h": round(float(X[mask, 1].mean()), 2),
+            "approx_unique_attractions": int(round(float(X[mask, 2].mean()))),
         })
     return stats
 

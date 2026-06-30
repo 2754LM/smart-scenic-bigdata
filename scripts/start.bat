@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM  Smart Scenic BigData Platform - One-Click Start
-REM  17 Docker containers: Hadoop HA + Spark + HBase + Kafka + Hive
+REM  15 Docker containers: Hadoop HA + Spark + HBase + Hive
 REM  MySQL 5.7 holds both business data and the Hive Metastore.
 REM  Double-click on Windows. Auto-waits for each component ready.
 REM ============================================================
@@ -69,11 +69,10 @@ echo [WARN] MySQL healthcheck timeout. Continuing anyway...
 echo(
 
 REM ---------- 4. Start big-data + app + Hive stack ----------
-echo [4/5] Starting 13 services (Hadoop, Spark, HBase, Kafka, Backend, Hive x2)...
+echo [4/5] Starting 11 services (Hadoop, Spark, HBase, Backend, Hive x2)...
 echo        ^> hadoop-namenode, datanode x2
 echo        ^> spark-master, spark-worker-1
 echo        ^> hbase-master, regionserver x2
-echo        ^> kafka-1, kafka-2
 echo        ^> hive-server-1, hive-server-2 (共享 mysql metastore)
 echo        ^> demo-backend (FastAPI on 8000)
 docker compose up -d ^
@@ -81,7 +80,6 @@ docker compose up -d ^
     hadoop-datanode-1 hadoop-datanode-2 ^
     spark-master spark-worker-1 ^
     hbase-master hbase-regionserver-1 hbase-regionserver-2 ^
-    kafka-1 kafka-2 ^
     hive-server-1 hive-server-2 ^
     demo-backend
 if errorlevel 1 (
@@ -177,7 +175,7 @@ echo(
 
 REM ---------- Final output ----------
 echo ==========================================================
-echo   All services up! (17 containers, MySQL 5.7 backs Hive too)
+echo   All services up! (15 containers, MySQL 5.7 backs Hive too)
 echo ==========================================================
 echo(
 echo   Frontend:        http://localhost:8080

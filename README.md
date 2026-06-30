@@ -1,14 +1,14 @@
 ﻿# 智能景区大数据平台 (Smart Scenic BigData Platform)
 
 > 选题十八：智能景区管理系统 6.2-6.5 评分点
-> 真分布式大数据集群 (17 容器) + 完整业务系统 (5 页前端 + 49 REST API + Kafka 实时流 + Hive 数仓)
+> 真分布式大数据集群 (15 容器) + 完整业务系统 (4 页前端 + 47 REST API + Hive 数仓)
 > 一键部署，10 分钟跑通
 
-本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**17 个容器**），完整实现作业 6.2-6.5 全部要求：
-- **6.2 平台搭建** - 17 容器一键部署（HBase 自动 init meta 表，业务表自动建；MySQL 5.7 同时承担业务库 + Hive Metastore）
-- **6.3 数据采集** - Sqoop MySQL→HDFS + Kafka 实时流 (Pyhive 真实查询 Hive，不做静默 fallback)
+本项目基于 **Docker Compose** 部署一整套**真分布式**的大数据集群（**15 个容器**），完整实现作业 6.2-6.5 全部要求：
+- **6.2 平台搭建** - 15 容器一键部署（HBase 自动 init meta 表，业务表自动建；MySQL 5.7 同时承担业务库 + Hive Metastore）
+- **6.3 数据采集** - Sqoop MySQL→HDFS (Pyhive 真实查询 Hive，不做静默 fallback)
 - **6.4 数据分析** - Spark 清洗 + Hive 数仓 (HS2 :10000) + 4 回归 + 1 聚类 + 4 分类 (无数据泄漏)
-- **6.5 可视化** - 5 页 Web 前端（含独立 Kafka/HBase 实时流页 + 真实 vs 预测折线）
+- **6.5 可视化** - 4 页 Web 前端（含真实 vs 预测折线）
 
 ---
 
@@ -21,19 +21,18 @@
 | ZooKeeper | `ZK_VERSION=3.9` | 3 节点 ensemble |
 | Hadoop | `HADOOP_VERSION=3.3.6` | HDFS HA (1 NN + 2 DN) |
 | HBase | `HBASE_VERSION=latest` | 2.1.x (harisekhon/hbase) |
-| Kafka | `KAFKA_VERSION=latest` | KRaft mode (2 brokers) |
-| Spark | `SPARK_VERSION=3.4.1` | 1 master + 1 worker |
+| Spark | `SPARK_VERSION=3.4.1` | 1 master + 1 worker (含 sklearn/joblib/pandas wheels) |
 | Hive | `HIVE_VERSION=3.1.3` | 数仓 (DataNucleus 4.2 + MySQL 5.7 兼容) |
 | MySQL | mysql:5.7 | 业务库 + Hive Metastore (合并部署; DataNucleus 不兼容 8.0) |
 | JDK | `JDK_VERSION=1.8.0_162` | 业务 Hadoop 镜像使用 |
 
-> **变更说明**：原 docx 方案要求 Kafka 3.1.0 (Scala 2.12 + ZK) + HBase 2.4.11，但 Docker Hub 上的 `harisekhon/hbase:2.4.11` 镜像不可用，故切到 `latest`（实际为 2.1.3）。同理 Kafka KRaft 模式更易在容器中编排。
+> **变更说明**：原 docx 方案要求 HBase 2.4.11，但 Docker Hub 上的 `harisekhon/hbase:2.4.11` 镜像不可用，故切到 `latest`（实际为 2.1.3）。Kafka 已删除（项目无实时流需求）。
 
 ---
 
 ## 一、快速开始（10 分钟跑通）
 
-### 1.1 启动大数据平台（17 容器）
+### 1.1 启动大数据平台（15 容器）
 
 ```bat
 cd smart-scenic-bigdata
@@ -97,15 +96,14 @@ scripts\install-deps.bat      REM 创建 venv + pip install -r requirements.txt
 │  │ :8080        │ │  :8000       │ │               │         │
 │  └──────┬───────┘ └──────┬───────┘ └──────────────┘         │
 └─────────┼────────────────┼──────────────────────────────────┘
-          │ HTTP / WS     │ docker exec / kafka-py / pymysql
+          │ HTTP / WS     │ docker exec / pymysql
 ┌─────────┴────────────────┴──────────────────────────────────┐
 │              Docker Network: bigdata-net                     │
 │                                                                │
 │  ╔═══════════════════════════════════════════════════════╗  │
 │  ║ 应用服务层                                            ║  │
-│  ║   Demo Backend (FastAPI)                              ║  │
-│  ║   Kafka Consumer 后台线程                              ║  │
-│  ║   PySpark Loader (智能双轨 ML)                        ║  │
+│  ║   Demo Backend (FastAPI, 47 REST API)                ║  │
+│  ║   sklearn joblib 模型加载 (毫秒级预测)                ║  │
 │  ╚═══════════════════════════════════════════════════════╝  │
 │                                                                │
 │  ╔═══════════════════════════════╦═══════════════════════╗   │
@@ -115,16 +113,17 @@ scripts\install-deps.bat      REM 创建 venv + pip install -r requirements.txt
 │  ║   (HDFS 真分布式, 副本=2)    ║                       ║   │
 │  ╚═══════════════════════════════╩═══════════════════════╝   │
 │                                                                │
-│  ╔═══════════════════════════════╦═══════════════════════╗   │
-│  ║ 存储层                        ║ 消息层              ║   │
-│  ║   HBase Master + 2 RS         ║  Kafka Broker × 2   ║   │
-│  ║   MySQL 8.0                   ║  (ZK 模式)         ║   │
-│  ╚═══════════════════════════════╩═══════════════════════╝   │
+│  ╔═══════════════════════════════╗   ╔════════════════╗   │
+│  ║ 存储层                        ║   ║ 元数据       ║   │
+│  ║   HBase Master + 2 RS         ║   ║ MySQL 5.7   ║   │
+│  ║   (NoSQL 实时画像/评论)       ║   ║ (业务库+     ║   │
+│  ║                               ║   ║  Hive MS)   ║   │
+│  ╚═══════════════════════════════╝   ╚════════════════╝   │
 │                                                                │
 │  ╔═══════════════════════════════════════════════════════╗  │
 │  ║ 协调层                                                ║  │
 │  ║   ZooKeeper Ensemble × 3 (1 leader + 2 follower)    ║  │
-│  ║   └── 服务 HBase + Kafka                             ║  │
+│  ║   └── 服务 HBase                                      ║  │
 │  ╚═══════════════════════════════════════════════════════╝  │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -165,7 +164,7 @@ smart-scenic-bigdata/
 │   ├── stop.bat               2. 停止所有容器（数据保留）
 │   ├── reset.bat              3. 完全重置（清空所有数据，会询问 yes）
 │   ├── install-deps.bat       4. 安装 Python venv + 依赖（仅 IDE 用）
-│   └── test-e2e.bat           5. 端到端验证（26 项 8 场景：MySQL/HDFS/HBase/Kafka/Spark/Hive/Backend/ML）
+│   └── test-e2e.bat           5. 端到端验证（25 项 7 场景：MySQL/HDFS/HBase/Spark/Hive/Backend/ML）
 │
 ├── docs/
 │   ├── 作业要求.md            选题要求 + 作业规范（合并）
@@ -180,7 +179,7 @@ smart-scenic-bigdata/
 
 ---
 
-## 四、17 个容器使用情况
+## 四、15 个容器使用情况
 
 | 容器 | 数量 | 实际用途 | 镜像 | 端口 |
 |------|------|---------|------|------|
@@ -190,15 +189,14 @@ smart-scenic-bigdata/
 | hadoop-datanode-1/2 | 2 | HDFS 副本 | apache/hadoop:3.3.6 | - |
 | hbase-master | 1 | HBase Master | harisekhon/hbase:latest | 11610 |
 | hbase-regionserver-1/2 | 2 | HBase Region 服务 | harisekhon/hbase:latest | 11620-11630 |
-| kafka-1/2 | 2 | 消息队列 (KRaft 模式, **不依赖 ZK**) | apache/kafka:latest | 19092/19095 |
-| spark-master | 1 | PySpark 调度 | apache/spark:3.4.1 | 18080 |
-| spark-worker-1 | 1 | PySpark 执行 | apache/spark:3.4.1 | - |
+| spark-master | 1 | PySpark 调度 (含 sklearn/joblib/pandas wheels) | smart-scenic/spark:custom | 18080 |
+| spark-worker-1 | 1 | PySpark 执行 | smart-scenic/spark:custom | - |
 | hive-server-1 | 1 | HiveServer2 :10000 + schematool 自动初始化 | smart-scenic/hive:custom | 11010/11012 |
 | hive-server-2 | 1 | HiveServer2 :10000 (负载均衡多实例) | smart-scenic/hive:custom | 11011/11013 |
-| demo-backend | 1 | FastAPI 后端 (49 endpoints, Pyhive 真实查 Hive) | python:3.10-slim | 8000 |
+| demo-backend | 1 | FastAPI 后端 (47 endpoints, beeline-via-exec 真实查 Hive) | smart-scenic/demo-backend:custom | 8000 |
 | (auto-init) | - | HBase 业务表 scenic_realtime / scenic_reviews + Hive Metastore schema | (start.bat 一键创建) | - |
 
-**结论：17 个容器全部有实际业务代码使用，0 个空跑。**
+**结论：15 个容器全部有实际业务代码使用，0 个空跑。**
 
 ### Hive 数仓架构（关键设计）
 - **MySQL 5.7**（一容器双角色）：业务库 `scenic` + Hive Metastore `hive_metastore`
@@ -209,19 +207,18 @@ smart-scenic-bigdata/
 
 ---
 
-## 五、Web 应用（5 页前端 + 49 REST API）
+## 五、Web 应用（4 页前端 + 47 REST API）
 
-### 5.1 5 页前端
+### 5.1 4 页前端
 
 | 页面 | URL | 内容 |
 |------|-----|------|
 | 总览大屏 | http://localhost:8080/index.html | 8 KPI + 4 ML 预测 + 7 ECharts 图 |
 | 数据分析 | http://localhost:8080/analysis.html | 6 图表 + FPGrowth Sankey 图 |
 | 模型预测 | http://localhost:8080/predict.html | 4 场景化卡 (客流/推荐/路线/画像) + 真实 vs 预测折线 |
-| ⚡ 实时流 | http://localhost:8080/realtime.html | 数据流图 + 引擎状态卡 + HBase 验证 |
 | 业务管理 | http://localhost:8080/manage.html | 4 tab (景点/游客/消费/游玩) + 系统管理 |
 
-### 5.2 49 个 REST 路由
+### 5.2 47 个 REST 路由
 
 | 模块 | 路由数 | 关键路径 |
 |------|--------|----------|
@@ -232,15 +229,14 @@ smart-scenic-bigdata/
 | 分析 | 7 | `/api/analysis/{daily,hourly,region,age-group,type-summary,fpgrowth,daily-compare}` |
 | 预测 (基础) | 5 | `/api/predict{,/regression,/classification,/clustering,/compare,/_engine}` |
 | 预测 (场景化) | 7 | `/api/predict-tourism/{attraction-forecast,attraction-recommend,route-recommend,visitor-profile/{id},tomorrow-summary,multi-day-forecast,fpgrowth-sankey}` |
-| 实时 | 8 | `/api/realtime/{visit-recent,visitor/{id},attraction/{id},publish/review,publish/event,kafka/status,task/trigger,hbase/clear}` |
 | 系统管理 | 10 | `/api/admin/{status,containers,models,datasets,hdfs,jobs,jobs/{id},actions,actions/{name},pipeline}` |
-| **合计** | **49** | |
+| **合计** | **47** | |
 
 ### 5.3 系统管理面板
 
 打开 `manage.html` → **系统管理** tab，一站式管理：
-- 17 容器状态（按存储/协调/计算/NoSQL/消息/数仓/应用分组）
-- 已训练 PySpark 模型列表
+- 15 容器状态（按存储/协调/计算/数仓/应用分组）
+- 已训练 sklearn 模型列表
 - 4 张 MySQL 表 + 4 个 CSV 文件状态
 - HDFS 分区目录
 - 6 个触发按钮（加载 CSV / Sqoop / Spark 清洗 / Hive DDL / Hive 查询 / PySpark 训练）
@@ -280,34 +276,6 @@ smart-scenic-bigdata/
 ```
 
 **前端触发**：manage.html → 系统管理 → ⚡ 一键初始化
-
----
-
-## 七、Kafka 实时流（完整业务实现）
-
-```
-[前端 realtime.html] → POST /api/realtime/{publish/*,task/trigger,hbase/clear}
-   ↓
-[kafka_producer.publish_*()]
-   ↓
-[Kafka broker (kafka-1:9092, KRaft mode)]
-   │  topic: scenic_reviews / scenic_events
-   ↓
-[kafka_consumer 后台线程]  启动时自动起 (demo-backend 启动时 start)
-   ↓
-[hbase_service.put_review() / put_realtime_event()]
-   ↓
-[HBase scenic_reviews / scenic_realtime]
-   ↓
-[前端 GET /api/realtime/{visit-recent,visitor/{id},attraction/{id}}]  验证落库
-```
-
-**任务触发器** (`POST /task/trigger`)：一键生成 50-500 个事件，模拟：
-- `random_events`: 随机混合 enter/exit/review
-- `consume_burst`: enter + consume + exit 套餐
-- `review_flood`: 大量评分评论
-
-**前端流程** → 见 `realtime.html` (在导航栏).
 
 ---
 
@@ -399,23 +367,14 @@ docker compose up -d hbase-master hbase-regionserver-1 hbase-regionserver-2
 ```
 等 ~60s 后 `docker exec hbase-master bash -c "hbase shell /dev/stdin <<< 'status simple'"` 应显示 `1 active master, 2 live servers, 0 dead servers`。
 
-### Q5: Kafka 实时流没数据
-打开 `realtime.html`：
-- 引擎状态卡显示 `Producer: ✓ 已连接` / `Consumer: ✓ 运行中`
-- 点 "⚡ 触发任务" → 等待 2 秒 → 点 "刷新 HBase" 应看到新数据
-- 如果没有：检查 `docker logs demo-backend` 看 Kafka consumer 错误
-
-### Q6: 端口被占用
-修改 `.env` 文件（如 `PORT_KAFKA=29092`），重启 `docker compose up -d`。
-
-### Q7: 完全重置
+### Q5: 完全重置
 ```bat
 scripts\stop.bat
 scripts\reset.bat       REM 输入 yes 确认，清空所有数据卷
 scripts\start.bat
 ```
 
-### Q8: Hive 数仓架构（MySQL 5.7 Metastore）
+### Q6: Hive 数仓架构（MySQL 5.7 Metastore）
 
 **当前架构**:
 - `mysql` (mysql:5.7) 同一容器兼任业务库 (`scenic`) + Hive Metastore (`hive_metastore` 库)
@@ -428,7 +387,7 @@ scripts\start.bat
 - Apache 官方在 `cwiki.apache.org/confluence/x/4z83Bg` 测试矩阵: MySQL 5.6.17+ 都可工作，5.7 最稳定
 - 升级到 Hive 4.x (DataNucleus 5+) 可回到 MySQL 8.0，但需要重写依赖
 
-### Q9: 演示流程（演示用）
+### Q7: 演示流程（演示用）
 
 ```bat
 scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
@@ -454,13 +413,7 @@ scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 - ✅ 可演示 HA：节点宕机不影响服务
 - ✅ 答辩加分：明确说明"真分布式"而非"伪分布式"
 
-### 10.3 Kafka KRaft 模式
-- ✅ 不依赖 ZK，单容器即可起 broker
-- ✅ 配置简单，无 controller quorum 配置麻烦
-- ❌ 与 docx 方案的 ZK 模式略不同，但 docx 方案是 2022 年的，已较旧
-- 当前 `.env` 用 `KAFKA_VERSION=latest` 实际是 3.x 的 KRaft 模式
-
-### 10.4 HBase 通过 docker exec 而非 happybase
+### 10.3 HBase 通过 docker exec 而非 happybase
 - happybase 1.2 + thriftpy2 协议不兼容 HBase 2.x Thrift server
 - docker exec 调用 hbase shell，慢一点（每次 0.5-1s）但兼容性强
 
@@ -483,7 +436,7 @@ scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 | 作业要求 | 本项目实现 | 状态 |
 |---------|----------|------|
 | 6.2 平台搭建 | 17 容器一键部署 (脚本化) | ✅ |
-| 6.3 数据采集 | Sqoop MySQL→HDFS + Kafka 实时流 (HBase 落库, 无降级 fallback) | ✅ |
+| 6.3 数据采集 | Sqoop MySQL→HDFS (4 张表，~220k 行) | ✅ |
 | 6.4 数据分析 | Spark 清洗 + **Hive 真实查询** (pyhive → HS2) + 4 回归 + 1 聚类 + 4 分类 | ✅ |
 | 6.5 可视化 | 5 页前端 (含独立实时流页 + 真实 vs 预测折线) | ✅ |
 
@@ -502,7 +455,7 @@ scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 | `stop.bat` | 停止所有容器（数据保留在 volume） | 不用时 |
 | `reset.bat` | 完全重置（清空所有数据卷，会询问 yes） | 重新开始 |
 | `install-deps.bat` | 创建本地 venv + pip install（仅 IDE 用） | 用编辑器写代码时 |
-| `test-e2e.bat` | 26 项端到端验证（8 场景：MySQL/HDFS/HBase/Kafka/Spark/Hive/Backend/ML）| CI / 调试 |
+| `test-e2e.bat` | 25 项端到端验证（7 场景：MySQL/HDFS/HBase/Spark/Hive/Backend/ML）| CI / 调试 |
 
 **典型工作流**：
 ```bat

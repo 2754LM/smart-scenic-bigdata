@@ -1,10 +1,10 @@
 """
-HBase service - shell out to `hbase shell` via docker exec.
+HBase service - shell out to `hbase shell` via Docker socket API
+(uses services.admin_service._run_in_container for proper socket-based exec).
 
-Why docker exec? happybase 1.2 + thriftpy2 doesn't speak the binary protocol
-HBase 2.x's Thrift server uses by default (Bad version in readMessageBegin).
-happybase 1.2 + thriftpy2 doesn't speak the binary protocol
-HBase 2.x's Thrift server uses by default (Bad version in readMessageBegin).
+Why socket API? demo-backend image has no docker CLI installed; only the
+docker socket is mounted. socket-based exec avoids the docker CLI requirement.
+
 详见 README.md 第十节"设计权衡"。
 """
 from __future__ import annotations
@@ -15,7 +15,17 @@ import time
 from typing import Any, Dict, List, Optional
 
 import config
-from utils import docker_exec, hbase_shell, now_iso, now_ms
+from utils import hbase_shell, now_iso, now_ms
+from services.admin_service import _run_in_container
+
+
+def _exec(container: str, cmd: str, timeout: int = 30) -> str:
+    """Run cmd inside container via Docker socket API (no docker CLI needed).
+    Uses docker_client.exec_capture which captures stdout via streaming exec.
+    """
+    from services.docker_client import exec_capture
+    r = exec_capture(container, ["sh", "-c", cmd], timeout=timeout)
+    return r.get("stdout", "") or ""
 
 log = logging.getLogger("smart-scenic.hbase")
 
@@ -51,8 +61,8 @@ def _ensure_syn() -> List[Dict[str, Any]]:
 
 def _docker_available() -> bool:
     try:
-        out = docker_exec(config.HBASE_CONTAINER, "echo ok", timeout=2)
-        return out is not None and len(out) > 0
+        from services.docker_client import list_containers
+        return bool(list_containers(all=False))
     except Exception:
         return False
 
@@ -113,10 +123,10 @@ def list_reviews(scenic_id: str, limit: int = 50) -> List[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------
-# Kafka 消费者调用接口
+# HBase direct write API (used by demo-backend API; previously also by Kafka consumer before Kafka was removed)
 # ----------------------------------------------------------------------
 def put_review(visitor_id: str, attraction_id: str, rating: int, comment: str, ts: int = 0) -> Dict[str, Any]:
-    """Kafka 消费者调用：把一条评论消息写进 HBase scenic_reviews
+    """把一条评论消息写进 HBase scenic_reviews
     跟 write_review 一样，但 row_key 包含 visitor_id 便于前缀查询
     """
     if not ts:
@@ -140,7 +150,7 @@ def put_review(visitor_id: str, attraction_id: str, rating: int, comment: str, t
 
 
 def put_realtime_event(visitor_id: str, attraction_id: str, event_type: str, ts: int = 0) -> Dict[str, Any]:
-    """Kafka 消费者调用：把一条实时事件写进 HBase scenic_realtime
+    """把一条实时事件写进 HBase scenic_realtime
     row_key: E{ts}_{visitor_id}_{attraction_id}（按时间倒序前缀查）
     """
     if not ts:

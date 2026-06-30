@@ -1,9 +1,9 @@
 @echo off
 REM ============================================================
 REM  Smart Scenic BigData - End-to-End Test
-REM  Run AFTER scripts\start.bat to validate the 17-container stack.
-REM  Tests: MySQL business schema, HDFS, HBase, Kafka, Spark,
-REM         Hive Metastore+HS2, demo-backend API, sklearn models.
+REM  Run AFTER scripts\start.bat to validate the 15-container stack.
+REM  Tests: MySQL business schema, HDFS, HBase, Spark, Hive Metastore+HS2,
+REM         demo-backend API, sklearn models.
 REM  Exit code = number of failed checks.
 REM ============================================================
 
@@ -137,35 +137,7 @@ if !CNT! geq 1 (echo        PASS [OK] rows=!CNT! & set /a PASS+=1) else (echo   
 echo.
 
 REM ============================================================
-REM Scenario 4: Kafka Real-time Stream (3 tests)
-REM ============================================================
-set /a SCENARIO+=1
-echo === Scenario !SCENARIO!: Kafka Real-time Stream ===
-echo.
-
-set /a TOTAL+=1
-echo [!TOTAL!] Kafka cluster reachable (kafka-1:9092) ...
-docker exec kafka-1 bash -c "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9092 --list 2>/dev/null" > "%TEMP%\k.txt" 2>&1
-findstr /C:"__consumer_offsets" "%TEMP%\k.txt" >nul
-if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL (check kafka-1 logs) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Kafka-list,)
-
-set /a TOTAL+=1
-echo [!TOTAL!] Kafka consumer in demo-backend (read API) ...
-docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/realtime/kafka/status', timeout=5); d=json.loads(r.read().decode()); print('OK' if d.get('consumer', {}).get('running') else 'NO')" > "%TEMP%\k.txt" 2>&1
-findstr /C:"OK" "%TEMP%\k.txt" >nul
-if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL consumer not running & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Kafka-consumer,)
-
-set /a TOTAL+=1
-echo [!TOTAL!] Trigger task produces events (write API) ...
-docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen(urllib.request.Request('http://localhost:8000/api/realtime/task/trigger', data=json.dumps({'task_type':'random_events','count':10,'attraction_id':1}).encode(), headers={'Content-Type':'application/json'}, timeout=10)); print(json.loads(r.read().decode()).get('events_published', 0))" > "%TEMP%\k.txt" 2>&1
-set EV=0
-for /f %%e in ('type "%TEMP%\k.txt"') do set EV=%%e
-if !EV! geq 10 (echo        PASS [OK] events=!EV! & set /a PASS+=1) else (echo        FAIL events=!EV! & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! Kafka-produce,)
-
-echo.
-
-REM ============================================================
-REM Scenario 5: Spark Cluster (2 tests)
+REM Scenario 4: Spark Cluster (2 tests)
 REM ============================================================
 set /a SCENARIO+=1
 echo === Scenario !SCENARIO!: Spark Cluster ===
