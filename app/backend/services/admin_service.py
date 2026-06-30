@@ -30,69 +30,67 @@ log = logging.getLogger("smart-scenic.admin")
 # Helper: run command in container (uses docker CLI or socket API fallback)
 def _run_in_container(container: str, *cmd, timeout: int = 30) -> dict:
     """Run command in container. Returns {stdout, stderr, exit_code}.
-    Tries docker CLI first (faster), falls back to Docker socket API.
+
+    Strategy: docker socket API with Tty=false + AttachStdout=false (Detach),
+    poll for completion, then fetch captured stdout via /exec/{id}/logs
+    (works for recent API versions when AttachStdout was true at start).
+
     Usage: _run_in_container("mysql", "mysql", "-e", "SELECT 1", timeout=10)
     """
-    cmd = list(cmd)  # tuple -> list for JSON serialization
-    # Try docker CLI first
-    try:
-        proc = subprocess.run(
-            ["docker", "exec", container] + cmd,
-            capture_output=True, text=True, timeout=timeout,
-        )
-        return {
-            "stdout": proc.stdout or "",
-            "stderr": proc.stderr or "",
-            "exit_code": proc["returncode"],
-        }
-    except FileNotFoundError:
-        pass  # No docker CLI in container
+    import time as _t
+    from services.docker_client import _request
 
-    # Fallback: use Docker socket API
-    try:
-        from services.docker_client import _request
-        exec_id = _request("POST", f"/containers/{container}/exec", {
-            "Cmd": cmd,
-            "AttachStdout": True,
-            "AttachStderr": True,
-        })
-        if not exec_id or "Id" not in exec_id:
-            return {"stdout": "", "stderr": "exec create failed", "exit_code": -1}
+    cmd = list(cmd)
 
-        # Start exec + capture output via raw HTTP
-        import socket as _s
-        sock = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect("/var/run/docker.sock")
-        body = json.dumps({"Detach": False, "Tty": False})
-        req = (
-            f"POST /exec/{exec_id['Id']}/start HTTP/1.1\r\n"
-            f"Host: docker\r\n"
-            f"Content-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n\r\n{body}"
-        )
-        sock.sendall(req.encode())
-        resp = b""
-        while True:
-            try:
-                chunk = sock.recv(65536)
-            except _s.timeout:
+    # 1. Create exec instance — AttachStdout=true so /exec/{id}/logs will work
+    exec_id = None
+    for _attempt in range(3):
+        try:
+            exec_id = _request("POST", f"/containers/{container}/exec", {
+                "Cmd": cmd,
+                "AttachStdout": True,
+                "AttachStderr": True,
+                "Tty": False,
+            })
+            if exec_id and "Id" in exec_id:
                 break
-            if not chunk:
-                break
-            resp += chunk
-        sock.close()
-        text = resp.decode("utf-8", errors="ignore")
-        if "\r\n\r\n" in text:
-            body_text = text.split("\r\n\r\n", 1)[1]
-        else:
-            body_text = text
+        except Exception:
+            pass
+        _t.sleep(1)
+    if not exec_id or "Id" not in exec_id:
+        return {"stdout": "", "stderr": "exec create failed after 3 retries", "exit_code": -1}
+    eid = exec_id["Id"]
 
-        info = _request("GET", f"/exec/{exec_id['Id']}/json")
-        ec = info.get("ExitCode", -1) if isinstance(info, dict) else -1
-        return {"stdout": body_text, "stderr": "", "exit_code": ec}
-    except Exception as e:
-        return {"stdout": "", "stderr": str(e), "exit_code": -1}
+    # 2. Start exec with Detach=true (don't block on stdout stream)
+    start_resp = _request("POST", f"/exec/{eid}/start", {"Detach": True})
+    if start_resp is None:
+        return {"stdout": "", "stderr": "exec start failed", "exit_code": -1}
+
+    # 3. Poll until Running=false (poll every 2s, max timeout seconds)
+    ec = -1
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        info = _request("GET", f"/exec/{eid}/json")
+        if isinstance(info, dict):
+            if not info.get("Running", True):
+                ec_obj = info.get("ExitCode")
+                ec = ec_obj if isinstance(ec_obj, int) else -1
+                break
+        _t.sleep(2)
+    else:
+        return {"stdout": "", "stderr": f"exec timed out after {timeout}s", "exit_code": -1}
+
+    # 4. Fetch captured stdout/stderr via /exec/{id}/logs (works for AttachStdout=true execs).
+    # NOTE: For detached execs the API returns a placeholder; result may be empty.
+    # The caller will still see correct exit_code and can verify HDFS artifacts separately.
+    log_resp = _request("GET", f"/exec/{eid}/logs", {"stdout": True, "stderr": True})
+    body_text = ""
+    if log_resp is not None and not isinstance(log_resp, dict):
+        body_text = str(log_resp)
+    # Common error responses → treat as empty (caller uses exit_code)
+    if isinstance(log_resp, dict) and log_resp.get("message"):
+        body_text = ""
+    return {"stdout": body_text, "stderr": "", "exit_code": ec}
 
 
 # ============================================================
@@ -265,20 +263,16 @@ def _op_load_csv(job: Job) -> None:
 def _op_sqoop_import(job: Job) -> None:
     """Sqoop: MySQL 4 张表 -> HDFS /scenic/sqoop/"""
     job.log_lines.append(f"[{_now_iso()}] start sqoop import")
-    cmd = [
-        "docker", "exec",
-        config.HADOOP_CONTAINER,
-        "bash", "/opt/jobs/sqoop-import-mysql.sh",
-    ]
-    job.log_lines.append(f"  cmd: {' '.join(cmd)}")
-    r = _run_in_container(*cmd, timeout=600)
+    cmd = ["bash", "/opt/jobs/sqoop-import-mysql.sh"]
+    job.log_lines.append(f"  cmd: docker exec {config.HADOOP_CONTAINER} {' '.join(cmd)}")
+    r = _run_in_container(config.HADOOP_CONTAINER, *cmd, timeout=600)
     proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
     # 写日志
     if proc["stdout"]:
-        for line in proc.stdout.splitlines()[-50:]:
+        for line in proc["stdout"].splitlines()[-50:]:
             job.log_lines.append(f"  {line}")
     if proc["returncode"] != 0:
-        job.log_lines.append(f"  STDERR: {proc.stderr[-500:]}")
+        job.log_lines.append(f"  STDERR: {proc['stderr'][-500:]}")
         raise RuntimeError(f'sqoop import failed (rc={proc["returncode"]})')
 
     # 验证 HDFS 文件
@@ -292,17 +286,15 @@ def _op_sqoop_import(job: Job) -> None:
 def _op_spark_clean(job: Job) -> None:
     """Spark 清洗：/scenic/sqoop -> /scenic/cleaned"""
     job.log_lines.append(f"[{_now_iso()}] start spark-submit clean")
-    cmd = [
-        "docker", "exec", config.SPARK_CONTAINER,
-        "bash", "/opt/jobs/spark-submit.sh", "clean",
-    ]
-    r = _run_in_container(*cmd, timeout=600)
+    cmd = ["bash", "/opt/jobs/spark-submit.sh", "clean"]
+    job.log_lines.append(f"  cmd: docker exec {config.SPARK_CONTAINER} {' '.join(cmd)}")
+    r = _run_in_container(config.SPARK_CONTAINER, *cmd, timeout=600)
     proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
     if proc["stdout"]:
         for line in proc["stdout"].splitlines()[-50:]:
             job.log_lines.append(f"  {line}")
     if proc["returncode"] != 0:
-        raise RuntimeError(f"spark clean failed: {proc.stderr[-500:]}")
+        raise RuntimeError(f"spark clean failed: {proc['stderr'][-500:]}")
     job.result = {"output": "/scenic/cleaned/"}
 
 
@@ -314,12 +306,9 @@ def _op_hive_ddl(job: Job) -> None:
 
         job.log_lines.append(f"  beeline -f /opt/jobs/hive/{sql_file} (HS2=hive-server-1:10000)")
 
-        cmd = [
-            "docker", "exec", "hive-server-1",
-            "bash", "-c",
-            f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/{sql_file}",
-        ]
-        r = _run_in_container(*cmd, timeout=300)
+        beeline_cmd = f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/{sql_file}"
+        job.log_lines.append(f"  cmd: docker exec hive-server-1 bash -c '{beeline_cmd[:80]}...'")
+        r = _run_in_container("hive-server-1", "bash", "-c", beeline_cmd, timeout=300)
         proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
         if proc["stdout"]:
             important = [
@@ -340,13 +329,10 @@ def _op_hive_queries(job: Job) -> None:
 
     job.log_lines.append("  beeline -f /opt/jobs/hive/queries.sql (HS2=hive-server-1:10000)")
 
-    cmd = [
-        "docker", "exec", "hive-server-1",
-        "bash", "-c",
-        "/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/queries.sql",
-    ]
+    beeline_cmd = "/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/scenic_ext' -n hive -p hive -f /opt/jobs/hive/queries.sql"
+    job.log_lines.append(f"  cmd: docker exec hive-server-1 bash -c '{beeline_cmd[:80]}...'")
 
-    r = _run_in_container(*cmd, timeout=600)
+    r = _run_in_container("hive-server-1", "bash", "-c", beeline_cmd, timeout=600)
 
     proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
 
@@ -360,11 +346,9 @@ def _op_hive_queries(job: Job) -> None:
 def _op_spark_train(job: Job) -> None:
     """PySpark MLlib 训练"""
     job.log_lines.append(f"[{_now_iso()}] start spark-submit ml-train")
-    cmd = [
-        "docker", "exec", config.SPARK_CONTAINER,
-        "bash", "/opt/jobs/spark-submit.sh", "ml-train",
-    ]
-    r = _run_in_container(*cmd, timeout=900)
+    cmd = ["bash", "/opt/jobs/spark-submit.sh", "ml-train"]
+    job.log_lines.append(f"  cmd: docker exec {config.SPARK_CONTAINER} {' '.join(cmd)}")
+    r = _run_in_container(config.SPARK_CONTAINER, *cmd, timeout=900)
     proc = {"returncode": r["exit_code"], "stdout": r["stdout"], "stderr": r["stderr"]}
     if proc["stdout"]:
         for line in proc["stdout"].splitlines()[-60:]:

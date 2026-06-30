@@ -59,10 +59,5 @@ CREATE EXTERNAL TABLE scenic_ext.ext_t_visit_record (
 STORED AS PARQUET
 LOCATION 'hdfs://hadoop-namenode:9000/scenic/cleaned/t_visit_record';
 
--- 验证
-SHOW TABLES IN scenic_ext;
-
-SELECT 'ext_t_attraction'    AS tbl, COUNT(*) AS n FROM scenic_ext.ext_t_attraction UNION ALL
-SELECT 'ext_t_visitor'      , COUNT(*)        FROM scenic_ext.ext_t_visitor UNION ALL
-SELECT 'ext_t_consumption'  , COUNT(*)        FROM scenic_ext.ext_t_consumption UNION ALL
-SELECT 'ext_t_visit_record' , COUNT(*)        FROM scenic_ext.ext_t_visit_record;
+    -- 验证 (避免 MR 引擎跑全表扫描，这里只 SHOW TABLES，不 SELECT)
+    SHOW TABLES IN scenic_ext;

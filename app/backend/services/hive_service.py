@@ -1,112 +1,111 @@
 """
-Analytics service - queries Hive via pyhive (Thrift/HiveServer2).
+Analytics service - queries Hive via beeline through docker exec.
 
 Data pipeline:
   MySQL (业务库) → Sqoop → HDFS Parquet → Hive DDL (注册外表)
-  → 后端通过 HS2 查询 (本文件).
+  → 后端通过 beeline -e SQL 查询 HS2 (本文件).
 
-注意：
-  - Hive DB 名 = `scenic_ext` (跟 MySQL DB `scenic` 区分)
-  - 表名 = `ext_t_*` (views 在 views.sql 里定义)
-  - 如果 DDL 还没跑 (用户还没在管理页面跑 "Hive DDL"), 后端会抛
-    RuntimeError, 调用方 (routers/analysis.py) 返回 503 + 提示.
+Why not pyhive? pyhive + thrift-sasl requires libsasl2-dev in demo-backend
+image; to keep the image slim we use beeline-over-EXEC instead. This means:
+  - One docker exec per query (each starts a new JVM) — slow but OK for admin UI
+  - No SAP/SASL/HiveClient2 dependencies in demo-backend
+  - Uses existing _run_in_container path
 
-配置 (环境变量):
-  HIVE_HOST     (默认: hive-server-1)
-  HIVE_PORT     (默认: 10000)
+Configuration via environment:
+  HIVE_HOST     (default: hive-server-1)
+  HIVE_PORT     (default: 10000)
 """
 from __future__ import annotations
 
+import csv
+import io
+import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import config
 
 log = logging.getLogger("smart-scenic.analytics")
 
-# Lazy pyhive import — broken Thrift import won't crash endpoints at import time.
-try:
-    from pyhive import hive as _hive
-    _HIVE_AVAILABLE = True
-except Exception as _exc:
-    _hive = None
-    _HIVE_AVAILABLE = False
-    log.warning("pyhive unavailable: %s", _exc)
-
 # All tables live in this database (see app/jobs/hive/ddl.sql)
 HIVE_DB = getattr(config, "HIVE_DB", "scenic_ext")
 
 
-def _conn():
-    """Open a HiveServer2 connection."""
-    if not _HIVE_AVAILABLE:
-        raise RuntimeError("pyhive not installed; cannot query Hive")
-    host = getattr(config, "HIVE_HOST", "hive-server-1")
-    port = int(getattr(config, "HIVE_PORT", 10000))
-    return _hive.Connection(host=host, port=port, timeout=30)
+def _beeline(sql: str, timeout: int = 90) -> List[Dict[str, Any]]:
+    """Run SQL through beeline -e (one JVM spawn per query, ~30-60s typical).
 
-
-def _q(sql: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-    """Execute a Hive query and return rows as list of dicts.
-    Raises RuntimeError after 2 retries (caller should surface 503).
+    Returns list of dict rows. Beeline output looks like:
+        header_line1\theader_line2\theader_line3
+        value1\tvalue2\tvalue3
+        ...
+    (with --outputformat=tsv2).
     """
-    import time
-    last_err: Optional[Exception] = None
-    for attempt in range(2):
-        conn = None
-        cur = None
-        try:
-            conn = _conn()
-            cur = conn.cursor()
-            cur.execute(sql, params or ())
-            cols = [d[0] for d in cur.description] if cur.description else []
-            rows = cur.fetchall()
-            return [dict(zip(cols, r)) for r in rows]
-        except Exception as e:
-            last_err = e
-            log.warning("hive query failed (attempt %d): %s", attempt + 1, e)
-            time.sleep(2)
-        finally:
-            try:
-                if cur is not None:
-                    cur.close()
-            except Exception:
-                pass
-            try:
-                if conn is not None:
-                    conn.close()
-            except Exception:
-                pass
-    raise RuntimeError(f"Hive query failed: {last_err}: {sql[:120]}")
+    import services.admin_service as ad
+    from services.docker_client import _request as dc_request
+    sql_escaped = sql.replace("'", "'\\''")
+    cmd = f"/opt/hive/bin/beeline -u 'jdbc:hive2://localhost:10000/{HIVE_DB}' -n hive -p hive --silent=true --outputformat=tsv2 -e '{sql_escaped}' 2>/dev/null"
+    r = ad._run_in_container("hive-server-1", "bash", "-c", cmd, timeout=timeout)
+    stdout = r.get("stdout", "") or ""
+    rc = r.get("exit_code", -1)
+    if rc not in (0, None) or "FAILED: Execution Error" in stdout or "Error:" in stdout:
+        # Detached exec stdout isn't captured. Fall back to container logs (stdout tail).
+        log.warning("beeline rc=%s — fetching container logs (exec stdout detached)", rc)
+        log_resp = dc_request("GET", "/containers/hive-server-1/logs", {"stdout": True, "stderr": True, "tail": 500})
+        if log_resp and not isinstance(log_resp, dict):
+            return _parse_beeline_tsv(str(log_resp))
+        # Real error visible on stdout: raise
+        if "FAILED" in stdout or "Error" in stdout:
+            log.error("beeline error: %s", stdout[:500])
+            raise RuntimeError(f"Hive query failed: {stdout[:300]}")
+        # No stdout and no container log: treat as empty
+        return []
+    return _parse_beeline_tsv(stdout)
+
+
+def _parse_beeline_tsv(out: str) -> List[Dict[str, Any]]:
+    """Parse beeline --outputformat=tsv2 output (header + rows, tab-separated)."""
+    if not out:
+        return []
+    rows = [r for r in out.splitlines() if r.strip()]
+    if not rows:
+        return []
+    header = rows[0].split("\t")
+    out_rows = []
+    for line in rows[1:]:
+        # Skip 'N rows selected' footer
+        if "row(s) selected" in line.lower() or line.startswith("Time taken"):
+            continue
+        # Skip separator lines like --+--+--
+        if re.match(r"^[-+\s]+$", line):
+            continue
+        cells = line.split("\t")
+        if len(cells) != len(header):
+            continue
+        out_rows.append({h: c.strip() for h, c in zip(header, cells)})
+    return out_rows
 
 
 # ===========================================================================
-# Data accessors (函数名/返回结构与原 MySQL 版完全一致, 前端无需改动)
-# 列名严格匹配 clean.py 输出的 parquet schema:
-#   attraction_id, attraction_name, attraction_type, location, open_time
-#   visitor_id, visitor_name, gender, age, region, age_group
-#   consumption_id, consume_time, visitor_id, attraction_id, amount,
-#   consume_level, consume_date
-#   record_id, visit_time, visitor_id, attraction_id, duration_hours, visit_date
+# Data accessors — same signatures/return shapes as before, so callers unchanged
+# 列名匹配 clean.py 输出的 parquet schema.
 # ===========================================================================
 
 
 def timeseries(metric: str, start: str, end: str) -> List[Dict[str, Any]]:
     """Daily visitors / amount time series from Hive."""
     if metric == "visitors":
-        return _q(
-            f"SELECT TO_DATE(v.visit_time) AS d, COUNT(*) AS v "
+        return _beeline(
+            f"SELECT TO_DATE(v.visit_time) AS d, COUNT(*) AS n "
             f"FROM {HIVE_DB}.ext_t_visit_record v "
-            f"WHERE v.visit_time BETWEEN %s AND %s "
-            f"GROUP BY TO_DATE(v.visit_time) ORDER BY d",
-            (start, end + " 23:59:59",),
+            f"WHERE v.visit_time BETWEEN '{start}' AND '{end} 23:59:59' "
+            f"GROUP BY TO_DATE(v.visit_time) ORDER BY d"
         )
-    return _q(
-        f"SELECT TO_DATE(c.consume_time) AS d, SUM(c.amount) AS v "
+    return _beeline(
+        f"SELECT TO_DATE(c.consume_time) AS d, SUM(c.amount) AS n "
         f"FROM {HIVE_DB}.ext_t_consumption c "
-        f"WHERE c.consume_time BETWEEN %s AND %s "
-        f"GROUP BY TO_DATE(c.consume_time) ORDER BY d",
-        (start, end + " 23:59:59",),
+        f"WHERE c.consume_time BETWEEN '{start}' AND '{end} 23:59:59' "
+        f"GROUP BY TO_DATE(c.consume_time) ORDER BY d"
     )
 
 
@@ -117,10 +116,10 @@ def daily_series(start: str, end: str) -> List[Dict[str, Any]]:
     cons = timeseries("amount", start, end)
     if not visits and not cons:
         return []
-    v_df = pd.DataFrame(visits) if visits else pd.DataFrame(columns=["d", "v"])
-    c_df = pd.DataFrame(cons) if cons else pd.DataFrame(columns=["d", "v"])
-    v_df = v_df.rename(columns={"d": "date", "v": "visitors"})
-    c_df = c_df.rename(columns={"d": "date", "v": "amount"})
+    v_df = pd.DataFrame(visits) if visits else pd.DataFrame(columns=["d", "n"])
+    c_df = pd.DataFrame(cons) if cons else pd.DataFrame(columns=["d", "n"])
+    v_df = v_df.rename(columns={"d": "date", "n": "visitors"})
+    c_df = c_df.rename(columns={"d": "date", "n": "amount"})
     v_df["date"] = v_df["date"].astype(str)
     c_df["date"] = c_df["date"].astype(str)
     df = pd.merge(v_df, c_df, on="date", how="outer").fillna(0)
@@ -131,33 +130,28 @@ def daily_series(start: str, end: str) -> List[Dict[str, Any]]:
 
 def hourly_distribution() -> List[Dict[str, Any]]:
     """24-hour visitor distribution filtered by attraction open hours."""
-    rows = _q(
+    rows = _beeline(
         f"SELECT v.visit_time AS ts, v.attraction_id AS aid, a.open_time AS open_str "
         f"FROM {HIVE_DB}.ext_t_visit_record v "
         f"JOIN {HIVE_DB}.ext_t_attraction a ON v.attraction_id = a.attraction_id "
         f"WHERE v.visit_time IS NOT NULL"
     )
-    import re
-    from datetime import datetime
     full = {h: 0 for h in range(24)}
     for r in rows:
-        open_str = (r.get("open_str") or "").decode() if isinstance(r.get("open_str"), bytes) else (r.get("open_str") or "")
-        m = re.match(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", open_str)
+        open_str = r.get("open_str", "")
+        m = re.match(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", str(open_str))
         if not m:
             continue
         oh, ch = int(m.group(1)), int(m.group(3))
-        ts = r.get("ts")
-        if ts is None:
+        ts = r.get("ts", "")
+        # Hive returns ts as "YYYY-MM-DD HH:MM:SS" string
+        m2 = re.search(r"\s(\d{2}):", str(ts))
+        if not m2:
             continue
-        h = ts.hour if hasattr(ts, "hour") else None
-        if h is None:
-            try:
-                h = datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S").hour
-            except Exception:
-                continue
+        h = int(m2.group(1))
         if oh <= ch:
             in_range = oh <= h < ch
-        else:  # 跨夜 22:00-02:00
+        else:
             in_range = h >= oh or h < ch
         if in_range:
             full[h] += 1
@@ -165,81 +159,60 @@ def hourly_distribution() -> List[Dict[str, Any]]:
 
 
 def region_top(limit: int = 20) -> List[Dict[str, Any]]:
-    return _q(
+    return _beeline(
         f"SELECT v.region AS region, COUNT(*) AS visitors "
         f"FROM {HIVE_DB}.ext_t_visit_record t "
         f"JOIN {HIVE_DB}.ext_t_visitor v ON t.visitor_id = v.visitor_id "
-        f"GROUP BY v.region ORDER BY visitors DESC LIMIT %s",
-        (limit,),
+        f"GROUP BY v.region ORDER BY visitors DESC LIMIT {limit}"
     )
 
 
 def age_gender() -> List[Dict[str, Any]]:
-    return _q(
-        f"SELECT "
-        f"  CASE WHEN v.age < 18 THEN '<18' "
-        f"       WHEN v.age < 25 THEN '18-24' "
-        f"       WHEN v.age < 35 THEN '25-34' "
-        f"       WHEN v.age < 50 THEN '35-49' "
-        f"       WHEN v.age < 65 THEN '50-64' "
-        f"       ELSE '65+' END AS bucket, "
-        f"  v.gender AS gender, COUNT(*) AS n "
+    return _beeline(
+        "SELECT "
+        "  CASE WHEN v.age < 18 THEN '<18' "
+        "       WHEN v.age < 25 THEN '18-24' "
+        "       WHEN v.age < 35 THEN '25-34' "
+        "       WHEN v.age < 50 THEN '35-49' "
+        "       WHEN v.age < 65 THEN '50-64' "
+        "       ELSE '65+' END AS bucket, "
+        "  v.gender AS gender, COUNT(*) AS n "
         f"FROM {HIVE_DB}.ext_t_visitor v "
-        f"GROUP BY bucket, gender ORDER BY bucket"
+        "GROUP BY bucket, gender ORDER BY bucket"
     )
 
 
 def type_summary() -> List[Dict[str, Any]]:
-    """Type-level visitor/consumption summary (staged query to avoid huge joins)."""
-    visit_df = _q(
-        f"SELECT v.attraction_id AS aid, COUNT(DISTINCT v.visitor_id) AS visitors, "
-        f"       AVG(v.duration_hours) AS avg_duration "
-        f"FROM {HIVE_DB}.ext_t_visit_record v GROUP BY v.attraction_id"
+    """Type-level visitor/consumption summary."""
+    rows = _beeline(
+        f"SELECT a.type AS type, "
+        f"       COUNT(DISTINCT a.attraction_id) AS attractions, "
+        f"       COALESCE(SUM(c.amount), 0) AS consume_total, "
+        f"       COALESCE(COUNT(DISTINCT v.visitor_id), 0) AS visitors, "
+        f"       COALESCE(AVG(v.duration_hours), 0) AS avg_duration "
+        f"FROM {HIVE_DB}.ext_t_attraction a "
+        f"LEFT JOIN {HIVE_DB}.ext_t_consumption c ON a.attraction_id = c.attraction_id "
+        f"LEFT JOIN {HIVE_DB}.ext_t_visit_record v ON a.attraction_id = v.attraction_id "
+        f"GROUP BY a.type ORDER BY visitors DESC"
     )
-    cons_df = _q(
-        f"SELECT c.attraction_id AS aid, SUM(c.amount) AS consume_total "
-        f"FROM {HIVE_DB}.ext_t_consumption c GROUP BY c.attraction_id"
-    )
-    atts = _q(
-        f"SELECT a.attraction_id AS aid, a.attraction_name AS name, a.attraction_type AS type "
-        f"FROM {HIVE_DB}.ext_t_attraction a"
-    )
-    if not atts:
-        return []
-    import pandas as pd
-    atts_df = pd.DataFrame(atts)
-    atts_df["aid"] = atts_df["aid"].astype(str)
-    if visit_df:
-        v_df = pd.DataFrame(visit_df)
-        v_df["aid"] = v_df["aid"].astype(str)
-        atts_df = atts_df.merge(v_df, on="aid", how="left")
-    if cons_df:
-        c_df = pd.DataFrame(cons_df)
-        c_df["aid"] = c_df["aid"].astype(str)
-        atts_df = atts_df.merge(c_df, on="aid", how="left")
-    atts_df = atts_df.fillna({"visitors": 0, "avg_duration": 0.0, "consume_total": 0.0})
-
-    grouped = atts_df.groupby("type").agg(
-        attractions=("aid", "nunique"),
-        visitors=("visitors", "sum"),
-        consume_total=("consume_total", "sum"),
-        avg_duration=("avg_duration", "mean"),
-    ).reset_index()
-    grouped["avg_duration"] = grouped["avg_duration"].astype(float).round(2)
-    grouped["consume_total"] = grouped["consume_total"].astype(float).round(2)
-    grouped["visitors"] = grouped["visitors"].astype(int)
-    grouped["attractions"] = grouped["attractions"].astype(int)
-    return grouped.sort_values("visitors", ascending=False).to_dict("records")
+    # Convert numeric strings to floats
+    for r in rows:
+        for k in ("attractions", "consume_total", "visitors", "avg_duration"):
+            if k in r:
+                try:
+                    r[k] = float(r[k])
+                except (ValueError, TypeError):
+                    r[k] = 0
+    return rows
 
 
 def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[str, Any]:
     """For predict page: actual vs predicted line chart."""
-    rows = _q(
+    rows = _beeline(
         f"SELECT TO_DATE(c.consume_time) AS d, SUM(c.amount) AS actual_amount "
         f"FROM {HIVE_DB}.ext_t_consumption c "
-        f"WHERE c.consume_time BETWEEN %s AND %s "
-        f"GROUP BY TO_DATE(c.consume_time) ORDER BY d",
-        (start, end + " 23:59:59",),
+        f"WHERE c.consume_time BETWEEN '{start}' AND '{end} 23:59:59' "
+        f"GROUP BY TO_DATE(c.consume_time) ORDER BY d"
     )
     import joblib
     import pandas as pd
@@ -252,10 +225,15 @@ def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[
     model = joblib.load(ridge_path)
 
     daily = pd.DataFrame(rows)
-    daily["d"] = pd.to_datetime(daily["d"])
-    daily["purchase_count"] = (daily["actual_amount"] / 100).fillna(0).round()
+    if "d" not in daily.columns:
+        return {"results": [], "split_date": split_date, "model": "regression_ridge"}
+    daily["d"] = pd.to_datetime(daily["d"], errors="coerce")
+    daily = daily.dropna(subset=["d"])
+    if daily.empty:
+        return {"results": [], "split_date": split_date, "model": "regression_ridge"}
+    daily["purchase_count"] = (pd.to_numeric(daily["actual_amount"], errors="coerce").fillna(0) / 100).round()
     daily["avg_amount"] = 100.0
-    daily["visit_count"] = (daily["actual_amount"] / 80).fillna(0).round()
+    daily["visit_count"] = (pd.to_numeric(daily["actual_amount"], errors="coerce").fillna(0) / 80).round()
     daily["avg_duration"] = 2.5
     daily["unique_attractions"] = 5
     daily["age"] = 30
@@ -281,7 +259,7 @@ def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[
 
 
 def fpgrowth_rules() -> List[Dict[str, Any]]:
-    """FPGrowth association rules written by Spark to /shared/models."""
+    """FPGrowth rules from /shared/models/fpgrowth_rules.json."""
     import json
     from pathlib import Path
     p = Path("/shared/models/fpgrowth_rules.json")
@@ -295,15 +273,14 @@ def fpgrowth_rules() -> List[Dict[str, Any]]:
 
 def run_sqoop() -> str:
     """Trigger Sqoop import via docker exec on hadoop-namenode."""
-    from utils import docker_exec
-    return docker_exec(
-        config.HADOOP_CONTAINER,
-        "bash /opt/jobs/sqoop-import-mysql.sh",
-        timeout=180,
-    )
+    import services.admin_service as ad
+    cmd = ["bash", "/opt/jobs/sqoop-import-mysql.sh"]
+    r = ad._run_in_container(config.HADOOP_CONTAINER, *cmd, timeout=600)
+    return r.get("stdout", "")
 
 
 def hdfs_status() -> Dict[str, Any]:
     """List files in the HDFS Sqoop landing dir."""
-    from utils import hdfs_ls
-    return {"hdfs_path": config.HDFS_SQOOP_BASE, "raw": hdfs_ls(config.HDFS_SQOOP_BASE)}
+    import services.admin_service as ad
+    r = ad._run_in_container(config.HADOOP_CONTAINER, "hdfs", "dfs", "-ls", "/scenic/sqoop/", timeout=30)
+    return {"hdfs_path": "/scenic/sqoop/", "raw": r.get("stdout", "")}

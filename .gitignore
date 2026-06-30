@@ -88,5 +88,6 @@ app/jobs/debug_*.py
 app/jobs/check_pkgs.py
 app/jobs/spark_server.py
 app/jobs/start_spark_server.sh
-app/jobs/spark-submit.sh
+app/backend/test_*.py
+# spark-submit.sh 是生产脚本，必须保留
 

@@ -1,15 +1,19 @@
 # ============================================================
-# Custom demo-backend image (FastAPI + uvicorn)
+# Custom demo-backend image (FastAPI + uvicorn + pyhive)
 # ============================================================
-# Minimal Dockerfile - NO apt-get (no Java, no curl).
-# PySpark in backend uses sklearn fallback (sklearn models trained by spark-master).
-# Java only needed inside spark-master, not here.
+# Minimal Dockerfile - NO Java (needed only inside spark-master).
+# pyhive needs SASL system libs for HiveServer2 Thrift SASL transport.
 
 FROM python:3.10-slim
 
 USER root
 
 WORKDIR /app
+
+# Install system deps needed by pyhive/thrift-sasl (libsasl2 for SASL handshake)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsasl2-2 libsasl2-dev libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for layer caching
 COPY requirements.txt /app/requirements.txt
