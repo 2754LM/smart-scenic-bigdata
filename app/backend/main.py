@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 import config
 import services.hbase_service as hbase_svc
@@ -125,6 +126,13 @@ def health():
         "service": config.APP_TITLE,
         "version": config.APP_VERSION,
     }
+
+
+# Serve frontend HTML pages. MUST be registered LAST (after all API routers
+# and explicit routes above) so it acts as a catch-all and never shadows
+# /api/* requests. html=True serves index.html at "/" (already handled by
+# the root() route above) and *.html files by name.
+app.mount("/", StaticFiles(directory="/app/frontend", html=True), name="frontend")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ def daily(start: str = "2023-01-01", end: str = "2023-12-31"):
         data = hive_svc.daily_series(start, end)
     except RuntimeError as e:
         raise HTTPException(503, f"Hive unavailable: {e}. Run 'Hive DDL' in manage.html first.")
-    return {"source": "hive", "start": start, "end": end, **_wrap(data)}
+    return {"source": "auto", "start": start, "end": end, **_wrap(data)}
 
 
 @router.get("/hourly")
@@ -69,6 +69,15 @@ def fpgrowth():
     except RuntimeError as e:
         raise HTTPException(503, f"Hive unavailable: {e}")
     return {"source": "fpgrowth", **_wrap(data)}
+
+
+@router.get("/apriori")
+def apriori():
+    try:
+        data = hive_svc.apriori_rules()
+    except RuntimeError as e:
+        raise HTTPException(503, f"Hive unavailable: {e}")
+    return {"source": "apriori", **_wrap(data)}
 
 
 @router.get("/daily-compare")

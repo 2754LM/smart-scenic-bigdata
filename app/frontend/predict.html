@@ -227,6 +227,24 @@
       </div>
     </div>
 
+    <!-- ML 可视化: 模型对比柱状图 + 混淆矩阵 -->
+    <div class="card" style="margin-bottom: 16px">
+      <div class="card-title">
+        <span>🔬 ML 模型评估可视化</span>
+        <span class="subtitle">分类模型对比 · 混淆矩阵</span>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px">
+        <div>
+          <div style="font-size:13px;color:#9ca3af;margin-bottom:6px">分类模型指标对比 (Acc / F1 / AUC)</div>
+          <div id="chart-model-compare" style="height: 320px"></div>
+        </div>
+        <div>
+          <div style="font-size:13px;color:#9ca3af;margin-bottom:6px">混淆矩阵 (4 模型)</div>
+          <div id="chart-confusion" style="height: 320px"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 真实 vs 预测 -->
     <div class="card" style="margin-bottom: 16px">
       <div class="card-title">

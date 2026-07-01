@@ -103,16 +103,42 @@ def timeseries(metric: str, start: str, end: str) -> List[Dict[str, Any]]:
 
 
 def daily_series(start: str, end: str) -> List[Dict[str, Any]]:
-    """Combined visits + amount per day."""
+    """Combined visits + amount per day. Falls back to MySQL if Hive unavailable."""
     import pandas as pd
     visits = timeseries("visitors", start, end)
     cons = timeseries("amount", start, end)
     if not visits and not cons:
-        return []
+        return _daily_series_mysql(start, end)
     v_df = pd.DataFrame(visits) if visits else pd.DataFrame(columns=["d", "n"])
     c_df = pd.DataFrame(cons) if cons else pd.DataFrame(columns=["d", "n"])
     v_df = v_df.rename(columns={"d": "date", "n": "visitors"})
     c_df = c_df.rename(columns={"d": "date", "n": "amount"})
+    v_df["date"] = v_df["date"].astype(str)
+    c_df["date"] = c_df["date"].astype(str)
+    df = pd.merge(v_df, c_df, on="date", how="outer").fillna(0)
+    df["visitors"] = df["visitors"].astype(int)
+    df["amount"] = df["amount"].astype(float)
+    return df.sort_values("date").to_dict("records")
+
+
+def _daily_series_mysql(start: str, end: str) -> List[Dict[str, Any]]:
+    """MySQL fallback for daily series when Hive beeline fails."""
+    from services.mysql_service import query as mysql_query
+    visits = mysql_query(
+        "SELECT DATE(时间) AS date, COUNT(*) AS visitors "
+        "FROM t_visit_record WHERE 时间 BETWEEN %s AND %s "
+        "GROUP BY DATE(时间) ORDER BY date",
+        (start, end + " 23:59:59"),
+    )
+    cons = mysql_query(
+        "SELECT DATE(时间) AS date, SUM(消费金额) AS amount "
+        "FROM t_consumption WHERE 时间 BETWEEN %s AND %s "
+        "GROUP BY DATE(时间) ORDER BY date",
+        (start, end + " 23:59:59"),
+    )
+    import pandas as pd
+    v_df = pd.DataFrame(visits) if visits else pd.DataFrame(columns=["date", "visitors"])
+    c_df = pd.DataFrame(cons) if cons else pd.DataFrame(columns=["date", "amount"])
     v_df["date"] = v_df["date"].astype(str)
     c_df["date"] = c_df["date"].astype(str)
     df = pd.merge(v_df, c_df, on="date", how="outer").fillna(0)
@@ -201,34 +227,58 @@ def type_summary() -> List[Dict[str, Any]]:
 
 def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[str, Any]:
     """For predict page: actual vs predicted line chart."""
-    rows = _beeline(
-        f"SELECT TO_DATE(c.consume_time) AS d, SUM(c.amount) AS actual_amount "
-        f"FROM {HIVE_DB}.ext_t_consumption c "
-        f"WHERE c.consume_time BETWEEN '{start}' AND '{end} 23:59:59' "
-        f"GROUP BY TO_DATE(c.consume_time) ORDER BY d"
-    )
     import joblib
     import pandas as pd
     from pathlib import Path
+    from services.mysql_service import query as mysql_query
 
     model_dir = Path("/shared/models/sklearn")
     ridge_path = model_dir / "regression_ridge.pkl"
-    if not ridge_path.exists() or not rows:
+    if not ridge_path.exists():
         return {"results": [], "split_date": split_date, "model": "regression_ridge"}
     model = joblib.load(ridge_path)
 
-    daily = pd.DataFrame(rows)
+    actual_rows = mysql_query(
+        "SELECT DATE(时间) AS d, SUM(消费金额) AS actual_amount "
+        "FROM t_consumption WHERE 时间 BETWEEN %s AND %s "
+        "GROUP BY DATE(时间) ORDER BY d",
+        (start, end + " 23:59:59"),
+    )
+    if not actual_rows:
+        return {"results": [], "split_date": split_date, "model": "regression_ridge"}
+    daily = pd.DataFrame(actual_rows)
     if "d" not in daily.columns:
         return {"results": [], "split_date": split_date, "model": "regression_ridge"}
     daily["d"] = pd.to_datetime(daily["d"], errors="coerce")
     daily = daily.dropna(subset=["d"])
     if daily.empty:
         return {"results": [], "split_date": split_date, "model": "regression_ridge"}
-    # Fill 3-model features with reasonable defaults for daily aggregates.
-    # (real per-day aggregates over visitors would require a second aggregation query)
-    daily["age"] = 30
-    daily["avg_duration"] = 2.5
-    daily["unique_attractions"] = 5
+    # Query real per-day features from MySQL: avg age, avg duration, unique attractions
+    feat_rows = mysql_query(
+        "SELECT DATE(vr.时间) AS d, "
+        "  AVG(v.年龄) AS avg_age, "
+        "  AVG(vr.游玩时长) AS avg_duration, "
+        "  COUNT(DISTINCT vr.景点ID) AS unique_attractions "
+        "FROM t_visit_record vr "
+        "LEFT JOIN t_visitor v ON vr.游客ID = v.游客ID "
+        "WHERE vr.时间 BETWEEN %s AND %s "
+        "GROUP BY DATE(vr.时间) ORDER BY d",
+        (start, end + " 23:59:59"),
+    )
+    if feat_rows:
+        feat_df = pd.DataFrame(feat_rows)
+        feat_df["d"] = pd.to_datetime(feat_df["d"], errors="coerce")
+        daily = daily.merge(
+            feat_df[["d", "avg_age", "avg_duration", "unique_attractions"]],
+            on="d", how="left",
+        )
+        daily["age"] = daily["avg_age"].fillna(30).astype(float)
+        daily["avg_duration"] = daily["avg_duration"].fillna(2.5).astype(float)
+        daily["unique_attractions"] = daily["unique_attractions"].fillna(5).astype(float)
+    else:
+        daily["age"] = 30
+        daily["avg_duration"] = 2.5
+        daily["unique_attractions"] = 5
     feature_order = ["age", "avg_duration", "unique_attractions"]
 
 
@@ -259,6 +309,19 @@ def fpgrowth_rules() -> List[Dict[str, Any]]:
     import json
     from pathlib import Path
     p = Path("/shared/models/fpgrowth_rules.json")
+    if not p.exists():
+        return []
+    with open(p, "r", encoding="utf-8") as f:
+        rules = json.load(f)
+    rules.sort(key=lambda r: r.get("lift", 0), reverse=True)
+    return rules[:20]
+
+
+def apriori_rules() -> List[Dict[str, Any]]:
+    """Apriori rules from /shared/models/apriori_rules.json."""
+    import json
+    from pathlib import Path
+    p = Path("/shared/models/apriori_rules.json")
     if not p.exists():
         return []
     with open(p, "r", encoding="utf-8") as f:

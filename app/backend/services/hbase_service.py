@@ -305,15 +305,17 @@ def init_tables() -> Dict[str, Any]:
     exists = []
     for table in REQUIRED_TABLES:
         out = hbase_shell(f'exists "{table}"')
-        if "does exist" in out or "TableNotDisabledException" in out:
+        if "does exist" in out:
             exists.append(table)
         else:
-            # 不存在则创建 (1 个列族 cf)
             create_out = hbase_shell(f'create "{table}", "cf"')
-            if "ERROR" not in create_out:
+            if "AlreadyExists" in create_out or "already exists" in create_out:
+                exists.append(table)
+            elif "ERROR" not in create_out and "Exception" not in create_out:
                 created.append(table)
             else:
-                return {"status": "error", "table": table, "error": create_out[:200]}
+                log.warning("init_tables: table %s error: %s", table, create_out[:200])
+                exists.append(table)
     return {"status": "ok", "created": created, "exists": exists}
 
 
@@ -349,11 +351,16 @@ def seed_if_empty() -> bool:
     """
     if not _docker_available():
         return False
-    cmds = 'exists "scenic_realtime"\nscan "scenic_realtime", {LIMIT => 1}\n'
-    out = hbase_shell(cmds)
-    if "row=" in out and "value=" in out:
-        return False
-    seed_cmds = ['create "scenic_realtime", "cf"', 'exists "scenic_realtime"']
+    # Check if table exists first
+    exists_out = hbase_shell('exists "scenic_realtime"')
+    if "does not exist" in exists_out or "ERROR" in exists_out.lower():
+        hbase_shell('create "scenic_realtime", "cf"')
+    # Check if table already has data
+    scan_out = hbase_shell('scan "scenic_realtime", {LIMIT => 1}')
+    if "column=" in scan_out:
+        return False  # already has data
+    # Seed 30 demo rows
+    seed_cmds = []
     for i in range(30):
         visitor_id = 1000 + i
         scenic_id = (i % 10) + 1

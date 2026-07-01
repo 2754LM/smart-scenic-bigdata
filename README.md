@@ -40,7 +40,7 @@ scripts\start.bat
 ```
 
 ⏱️ 等待 3-5 分钟（首次启动要 build 镜像 + 初始化 MySQL）。  
-✅ 完成后 17 容器 up，HBase 自动 init 业务表 `scenic_realtime` / `scenic_reviews`，Hive 自动 `schematool` 初始化。
+✅ 完成后 15 容器 up，HBase 自动 init 业务表 `scenic_realtime` / `scenic_reviews`，Hive 自动 `schematool` 初始化。
 
 ### 1.2 准备 4 个 CSV 数据
 
@@ -136,7 +136,7 @@ scripts\install-deps.bat      REM 创建 venv + pip install -r requirements.txt
 smart-scenic-bigdata/
 ├── README.md                  ← 本文件（主文档）
 ├── LICENSE                    MIT
-├── docker-compose.yml         17 容器编排
+├── docker-compose.yml         15 容器编排
 ├── .env                       端口/密码/镜像版本
 ├── .gitattributes             LF 行尾强制
 │
@@ -160,7 +160,7 @@ smart-scenic-bigdata/
 │   └── jobs/                  Spark / Hive / PySpark 训练脚本
 │
 ├── scripts/                   运维脚本（5 个，Windows .bat）
-│   ├── start.bat              1. 一键启动 17 容器（含 HBase 自动 init + Hive Metastore 初始化）
+│   ├── start.bat              1. 一键启动 15 容器（含 HBase 自动 init + Hive Metastore 初始化）
 │   ├── stop.bat               2. 停止所有容器（数据保留）
 │   ├── reset.bat              3. 完全重置（清空所有数据，会询问 yes）
 │   ├── install-deps.bat       4. 安装 Python venv + 依赖（仅 IDE 用）
@@ -390,9 +390,9 @@ scripts\start.bat
 ### Q7: 演示流程（演示用）
 
 ```bat
-scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
+scripts\test-e2e.bat       REM 先跑 23 项验证（应该全 PASS）
 打开浏览器：
-  1. http://localhost:8080/manage.html → 系统管理 tab → 看 17 容器 ● 全部绿色
+  1. http://localhost:8080/manage.html → 系统管理 tab → 看 15 容器 ● 全部绿色
   2. 点 ⚡ 一键初始化 → 5-10 分钟后看 4 个已训练模型 (regression / classification)
   3. 切到 http://localhost:8080/predict.html → 选场景 → 输入特征 → 看预测结果
   4. 切到 http://localhost:8080/realtime.html → 点 ⚡ 触发任务 → 验证 HBase 落库
@@ -435,7 +435,7 @@ scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 
 | 作业要求 | 本项目实现 | 状态 |
 |---------|----------|------|
-| 6.2 平台搭建 | 17 容器一键部署 (脚本化) | ✅ |
+| 6.2 平台搭建 | 15 容器一键部署 (脚本化) | ✅ |
 | 6.3 数据采集 | Sqoop MySQL→HDFS (4 张表，~220k 行) | ✅ |
 | 6.4 数据分析 | Spark 清洗 + **Hive 真实查询** (pyhive → HS2) + 4 回归 + 1 聚类 + 4 分类 | ✅ |
 | 6.5 可视化 | 5 页前端 (含独立实时流页 + 真实 vs 预测折线) | ✅ |
@@ -451,7 +451,7 @@ scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 
 | 脚本 | 用途 | 何时用 |
 |------|------|--------|
-| `start.bat` | 一键启动 17 容器（含 HBase 自动 init + Hive Metastore init） | 每天开机第一次 |
+| `start.bat` | 一键启动 15 容器（含 HBase 自动 init + Hive Metastore init） | 每天开机第一次 |
 | `stop.bat` | 停止所有容器（数据保留在 volume） | 不用时 |
 | `reset.bat` | 完全重置（清空所有数据卷，会询问 yes） | 重新开始 |
 | `install-deps.bat` | 创建本地 venv + pip install（仅 IDE 用） | 用编辑器写代码时 |
@@ -459,8 +459,8 @@ scripts\test-e2e.bat       REM 先跑 26 项验证（应该全 PASS）
 
 **典型工作流**：
 ```bat
-scripts\start.bat      REM 第一次：启动 17 容器
-scripts\test-e2e.bat   REM 验证：8 场景 26 项应该全 PASS
+scripts\start.bat      REM 第一次：启动 15 容器
+scripts\test-e2e.bat   REM 验证：7 场景 23 项应该全 PASS
 REM 浏览器 http://localhost:8080 玩耍 (5 页 + 49 API)
 scripts\stop.bat       REM 关闭
 ```

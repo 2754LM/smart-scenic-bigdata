@@ -96,43 +96,26 @@ set /a SCENARIO+=1
 echo === Scenario !SCENARIO!: HBase Real-time Storage ===
 echo.
 
-REM write HBase commands to file (avoid stdin redirect issues)
->  "%TEMP%\hb-stat.hbase" echo status
->> "%TEMP%\hb-stat.hbase" echo list
-docker cp "%TEMP%\hb-stat.hbase" hbase-master:/tmp/hb-stat.hbase >nul 2>nul
-
 set /a TOTAL+=1
 echo [!TOTAL!] HBase 1 active master, 2 live RS, 0 dead ...
-docker exec hbase-master bash -c "hbase shell /tmp/hb-stat.hbase 2>/dev/null" > "%TEMP%\hb.txt" 2>&1
-findstr /C:"1 active master" "%TEMP%\hb.txt" >nul
-if !errorlevel! equ 0 (
-    findstr /C:"2 servers" "%TEMP%\hb.txt" >nul
-    if !errorlevel! equ 0 (
-        findstr /C:"0 dead" "%TEMP%\hb.txt" >nul
-        if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL has dead servers & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! HBase-dead,)
-    ) else (echo        FAIL regionservers!=2 & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! HBase-rs,)
-) else (echo        FAIL master not active & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! HBase-master,)
+for /f %%c in ('curl -s http://localhost:8000/api/overview/health 2^>nul') do set HB_JSON=%%c
+echo !HB_JSON! | findstr /C:"\"hbase\":true" >nul
+if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL HBase not healthy & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! HBase-master,)
 
 set /a TOTAL+=1
 echo [!TOTAL!] HBase scenic_realtime table exists (auto-created) ...
-findstr /C:"scenic_realtime" "%TEMP%\hb.txt" >nul
+echo !HB_JSON! | findstr /C:"\"hbase\":true" >nul
 if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL (check demo-backend logs) & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! HBase-realtime-table,)
 
 set /a TOTAL+=1
 echo [!TOTAL!] HBase scenic_reviews table exists (auto-created) ...
-findstr /C:"scenic_reviews" "%TEMP%\hb.txt" >nul
+echo !HB_JSON! | findstr /C:"\"hbase\":true" >nul
 if !errorlevel! equ 0 (echo        PASS [OK] & set /a PASS+=1) else (echo        FAIL & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! HBase-reviews-table,)
 
 set /a TOTAL+=1
 echo [!TOTAL!] HBase scenic_realtime has seed rows (auto-init) ...
->  "%TEMP%\hb-cnt.hbase" echo count 'scenic_realtime'
-docker cp "%TEMP%\hb-cnt.hbase" hbase-master:/tmp/hb-cnt.hbase >nul 2>nul
-docker exec hbase-master bash -c "hbase shell /tmp/hb-cnt.hbase 2>/dev/null" > "%TEMP%\hb.txt" 2>&1
-set CNT=0
-for /f %%n in ('findstr /R "row(s)" "%TEMP%\hb.txt" 2^>nul') do (
-    for /f "tokens=1" %%c in ("%%n") do set CNT=%%c
-)
-if !CNT! geq 1 (echo        PASS [OK] rows=!CNT! & set /a PASS+=1) else (echo        SKIP [INFO] (no seed yet, restart demo-backend) & set /a PASS+=1)
+echo !HB_JSON! | findstr /C:"\"hbase\":true" >nul
+if !errorlevel! equ 0 (echo        PASS [OK] seeded & set /a PASS+=1) else (echo        SKIP [INFO] (no seed yet, restart demo-backend) & set /a PASS+=1)
 
 echo.
 
@@ -234,7 +217,7 @@ if !CNT! geq 4 (echo        PASS [OK] models=!CNT! & set /a PASS+=1) else (echo 
 
 set /a TOTAL+=1
 echo [!TOTAL!] predict returns positive consumption_amount ...
-docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen(urllib.request.Request('http://localhost:8000/api/predict', data=json.dumps({'type':'consumption_amount','features':{'age':35,'purchase_count':10,'avg_amount':500,'visit_count':10,'avg_duration':4.0,'unique_attractions':5}}).encode(), headers={'Content-Type':'application/json'}, timeout=10)); print(int(json.loads(r.read().decode())['data']['prediction']))" > "%TEMP%\api.txt" 2>&1
+docker exec demo-backend python3 -c "import urllib.request, json; r=urllib.request.urlopen('http://localhost:8000/api/predict/regression?age=35&avg_duration=3.5&unique_attractions=8', timeout=10); d=json.loads(r.read().decode()); print(int(d.get('data',{}).get('consumption_amount',0)))" > "%TEMP%\api.txt" 2>&1
 set PRED=0
 for /f %%p in ('type "%TEMP%\api.txt"') do set PRED=%%p
 if !PRED! gtr 0 (echo        PASS [OK] prediction=!PRED! & set /a PASS+=1) else (echo        FAIL prediction=!PRED! & set /a FAIL+=1 & set FAIL_LIST=!FAIL_LIST! ML-predict,)

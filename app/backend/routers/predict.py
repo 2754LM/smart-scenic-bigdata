@@ -27,9 +27,10 @@ def do_predict(req: PredictRequest):
 
 
 @router.get("/regression")
-def regression():
-    data = model_svc.regression_report()
-    return {"source": "sklearn", "data": {"results": data}}
+def regression(age: float = 35, avg_duration: float = 3.5, unique_attractions: int = 8):
+    features = {"age": age, "avg_duration": avg_duration, "unique_attractions": unique_attractions}
+    data = model_svc.regression_predict(features)
+    return {"source": "sklearn", "data": data}
 
 
 @router.get("/classification")
@@ -47,3 +48,9 @@ def clustering():
 @router.get("/compare")
 def compare():
     return {"source": "sklearn", "data": model_svc.compare_models()}
+
+
+@router.get("/confusion-matrix")
+def confusion_matrix():
+    data = model_svc.confusion_matrix()
+    return {"source": "sklearn", "data": data}

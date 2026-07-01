@@ -386,8 +386,8 @@ def get_containers_status() -> List[Dict[str, Any]]:
 
 
 def get_models_status() -> Dict[str, Any]:
-    """查 /shared/models/ 下的已训练 PySpark 模型"""
-    models_dir = Path(config.PYSPARK_MODELS_DIR)
+    """查 /shared/models/sklearn/ 下的 .pkl 模型文件"""
+    models_dir = Path(config.PYSPARK_MODELS_DIR) / "sklearn"
     out = {
         "models_dir": str(models_dir),
         "models": [],
@@ -396,23 +396,24 @@ def get_models_status() -> Dict[str, Any]:
     if not models_dir.exists():
         out["error"] = "models dir not exist (training not started)"
         return out
-    for d in models_dir.iterdir():
-        if d.is_dir() and (d / "metadata").exists():
-            # 解析模型类型
-            name = d.name
+    for f in sorted(models_dir.iterdir()):
+        if f.is_file() and f.suffix == ".pkl":
+            name = f.stem
             kind = "unknown"
-            if "regression" in name:    kind = "regression"
+            if "regression" in name:       kind = "regression"
             elif "classification" in name: kind = "classification"
-            elif "clustering" in name:  kind = "clustering"
-            # 修改时间
+            elif "clustering" in name:     kind = "clustering"
             try:
-                mtime = datetime.fromtimestamp(d.stat().st_mtime).isoformat()
+                mtime = datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                size_kb = round(f.stat().st_size / 1024, 1)
             except Exception:
                 mtime = None
+                size_kb = None
             out["models"].append({
                 "name": name,
                 "kind": kind,
-                "path": str(d),
+                "path": str(f),
+                "size_kb": size_kb,
                 "modified_at": mtime,
             })
     out["count"] = len(out["models"])

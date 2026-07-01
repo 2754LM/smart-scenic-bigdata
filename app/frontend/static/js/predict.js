@@ -19,6 +19,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadClassificationTable(),
     loadClusteringTable(),
     loadCompareChart(),
+    loadModelCompareChart(),
+    loadConfusionMatrix(),
   ]);
 
   document.getElementById('btn-recommend').addEventListener('click', loadRecommend);
@@ -452,9 +454,61 @@ async function loadCompareChart() {
         sse += diff * diff; n++;
       }
       const test_rmse = Math.sqrt(sse / n);
-      infoEl.innerHTML = `训练 <span style="color:#00d4ff">${r.train_days}</span> 天 · 测试 <span style="color:#f59e0b">${r.test_days}</span> 天 · 测试集 RMSE = <span class="text-accent">${test_rmse.toFixed(2)}</span>`;
+      const trainDays = splitIdx;
+      const testDays = data.length - splitIdx;
+      infoEl.innerHTML = `训练 <span style="color:#00d4ff">${trainDays}</span> 天 · 测试 <span style="color:#f59e0b">${testDays}</span> 天 · 测试集 RMSE = <span class="text-accent">${test_rmse.toFixed(2)}</span>`;
     }
 
     window.addEventListener('resize', () => chart.resize());
   } catch (e) { renderError(el, '加载失败: ' + e.message); }
+}
+
+/* ===== ML 模型评估可视化 ===== */
+
+async function loadModelCompareChart() {
+  const el = document.getElementById('chart-model-compare');
+  if (!el) return;
+  try {
+    const r = await API.predictCompare();
+    const cls = r.data.classification || [];
+    if (!cls.length) { el.innerHTML = '<span class="text-muted">无数据</span>'; return; }
+    const models = cls.map(c => c.model.toUpperCase());
+    const chart = echarts.init(el);
+    chart.setOption({
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['Accuracy', 'F1', 'AUC'], textStyle: { color: '#9ca3af' } },
+      xAxis: { type: 'category', data: models, axisLabel: { color: '#b0c4de' } },
+      yAxis: { type: 'value', min: 0.6, max: 1.0, axisLabel: { color: '#b0c4de', formatter: v => v.toFixed(2) } },
+      series: [
+        { name: 'Accuracy', type: 'bar', data: cls.map(c => c.accuracy), itemStyle: { color: '#00d4ff' } },
+        { name: 'F1', type: 'bar', data: cls.map(c => c.f1), itemStyle: { color: '#a855f7' } },
+        { name: 'AUC', type: 'bar', data: cls.map(c => c.auc), itemStyle: { color: '#10b981' } },
+      ],
+    });
+    window.addEventListener('resize', () => chart.resize());
+  } catch (e) { el.innerHTML = '<span class="text-muted">加载失败</span>'; }
+}
+
+async function loadConfusionMatrix() {
+  const el = document.getElementById('chart-confusion');
+  if (!el) return;
+  try {
+    const r = await api('/api/predict/confusion-matrix');
+    const data = r.data || [];
+    if (!data.length) { el.innerHTML = '<span class="text-muted">无数据</span>'; return; }
+    const models = data.map(d => d.model);
+    const chart = echarts.init(el);
+    chart.setOption({
+      tooltip: { trigger: 'item' },
+      legend: { data: models, textStyle: { color: '#9ca3af' }, top: 0 },
+      grid: { top: 40, bottom: 10, left: 50, right: 20 },
+      xAxis: { type: 'category', data: ['TP', 'FP', 'FN', 'TN'], axisLabel: { color: '#b0c4de' } },
+      yAxis: { type: 'value', name: 'count', axisLabel: { color: '#b0c4de' } },
+      series: data.map(d => ({
+        name: d.model, type: 'bar', stack: 'cm',
+        data: [d.tp, d.fp, d.fn, d.tn],
+      })),
+    });
+    window.addEventListener('resize', () => chart.resize());
+  } catch (e) { el.innerHTML = '<span class="text-muted">加载失败</span>'; }
 }

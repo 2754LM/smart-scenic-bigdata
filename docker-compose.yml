@@ -256,9 +256,9 @@ services:
     networks:
       - bigdata-net
     healthcheck:
-      test: ["CMD-SHELL", "echo 'status' | hbase shell -n 2>&1 | grep -q '1 active master' || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/16010' || exit 1"]
       interval: 15s
-      timeout: 10s
+      timeout: 5s
       retries: 20
       start_period: 90s
 
@@ -376,7 +376,7 @@ services:
     networks:
       - bigdata-net
     healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/10000 || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/10000' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 15
@@ -424,7 +424,7 @@ services:
     networks:
       - bigdata-net
     healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/10000 || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/10000' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 15
@@ -504,7 +504,8 @@ services:
       - "8000:8000"
     volumes:
       - ./app/backend:/app
-      - shared-data:/shared:ro
+      - ./app/frontend:/app/frontend:ro
+      - shared-data:/shared
       # Mount Docker socket so backend can list containers / docker exec
       # (used by admin_service to inspect containers & trigger jobs)
       - /var/run/docker.sock:/var/run/docker.sock

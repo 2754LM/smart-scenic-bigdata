@@ -167,6 +167,41 @@ def predict(task: str, features: Dict[str, Any]) -> Dict[str, Any]:
     raise RuntimeError("no model available for task: " + task)
 
 
+def regression_predict(features: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run all 4 regression models and return predictions for given features."""
+    _load_models()
+    if features is None:
+        features = {"age": 35, "avg_duration": 3.5, "unique_attractions": 8}
+    X = _features_to_spark("consumption_amount", features)
+
+    model_map = {
+        "linear": "regression_linear",
+        "lasso": "regression_lasso",
+        "ridge": "regression_ridge",
+        "rf": "regression_rf",
+    }
+    models_out: Dict[str, Any] = {}
+    best_pred = 0.0
+    for name, model_key in model_map.items():
+        if model_key in _models:
+            try:
+                pred = _models[model_key].predict(X)
+                val = round(max(float(pred[0]), 0.0), 2)
+                models_out[name] = {
+                    "prediction": val,
+                    "features_used": list(REGRESSION_FEATURES),
+                }
+                if name == "ridge" or best_pred == 0.0:
+                    best_pred = val
+            except Exception as e:
+                log.warning("regression_predict failed for %s: %s", model_key, e)
+    return {
+        "consumption_amount": best_pred,
+        "models": models_out,
+        "input_features": features,
+    }
+
+
 def regression_report() -> List[Dict[str, Any]]:
     return _metrics.get("regression", [])
 
@@ -190,7 +225,8 @@ def clustering_report() -> List[Dict[str, Any]]:
         "  COALESCE(SUM(c.消费金额), 0) AS total_consume, "
         "  COALESCE(COUNT(c.消费ID), 0) AS consume_count, "
         "  COALESCE(COUNT(vr.记录ID), 0) AS visit_count, "
-        "  COALESCE(SUM(vr.游玩时长), 0) AS total_duration "
+        "  COALESCE(SUM(vr.游玩时长), 0) AS total_duration, "
+        "  COALESCE(COUNT(DISTINCT vr.景点ID), 0) AS unique_attractions "
         "FROM t_visitor v "
         "LEFT JOIN t_consumption c ON v.游客ID = c.游客ID "
         "LEFT JOIN t_visit_record vr ON v.游客ID = vr.游客ID "
@@ -203,14 +239,21 @@ def clustering_report() -> List[Dict[str, Any]]:
 
 
 
-    # 构造 3-feature 矩阵 (年龄 / 平均游玩时长 / 去过的景点数近似)
+    # 构造 3-feature 矩阵 (年龄 / 平均游玩时长 / 去过的景点数)
     X = np.zeros((len(rows), 3))
     for i, r in enumerate(rows):
         X[i, 0] = r.get("age") or 30                            # age
         X[i, 1] = (r.get("total_duration") / max(r.get("visit_count") or 1, 1))  # avg_duration
-        X[i, 2] = 3  # unique_attractions 近似 (无更精确的 query)
+        X[i, 2] = r.get("unique_attractions") or 0             # unique_attractions
 
     km = _models["clustering_kmeans"]
+    # KMeans was trained on StandardScaler-transformed features (see train.py).
+    # Use the scaler from the regression pipeline (same mean/std) to transform.
+    X_raw = X.copy()
+    if "regression_ridge" in _models:
+        scaler = _models["regression_ridge"].named_steps.get("scaler")
+        if scaler is not None:
+            X = scaler.transform(X)
     labels = km.predict(X)
 
     stats = []
@@ -222,9 +265,9 @@ def clustering_report() -> List[Dict[str, Any]]:
         stats.append({
             "cluster": c,
             "n": n,
-            "avg_age": round(float(X[mask, 0].mean()), 1),
-            "avg_duration_h": round(float(X[mask, 1].mean()), 2),
-            "approx_unique_attractions": int(round(float(X[mask, 2].mean()))),
+            "avg_age": round(float(X_raw[mask, 0].mean()), 1),
+            "avg_duration_h": round(float(X_raw[mask, 1].mean()), 2),
+            "approx_unique_attractions": int(round(float(X_raw[mask, 2].mean()))),
         })
     return stats
 
@@ -235,6 +278,60 @@ def compare_models() -> Dict[str, Any]:
         "classification": _metrics.get("classification", []),
         "clustering": _metrics.get("clustering", []),
     }
+
+
+def confusion_matrix() -> List[Dict[str, Any]]:
+    """Compute 2x2 confusion matrix for each classification model using MySQL data."""
+    import numpy as np
+    from services.mysql_service import query as mysql_query
+
+    rows = mysql_query(
+        "SELECT v.年龄 AS age, "
+        "  AVG(vr.游玩时长) AS avg_duration, "
+        "  COUNT(DISTINCT vr.景点ID) AS unique_attractions, "
+        "  COUNT(vr.记录ID) AS visit_count "
+        "FROM t_visitor v "
+        "LEFT JOIN t_visit_record vr ON v.游客ID = vr.游客ID "
+        "GROUP BY v.游客ID, v.年龄"
+    )
+    if not rows:
+        return []
+
+    import pandas as pd
+    df = pd.DataFrame(rows)
+    for col in ["age", "avg_duration", "unique_attractions", "visit_count"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    median_vc = df["visit_count"].median()
+    df["label"] = (df["visit_count"] >= median_vc).astype(int)
+
+    features = ["age", "avg_duration", "unique_attractions"]
+    X_raw = df[features].values.astype(float)
+
+    scaler = _models.get("_scaler")
+    if scaler is not None:
+        X = scaler.transform(X_raw)
+    else:
+        X = X_raw
+
+    y_true = df["label"].values
+    results = []
+    for name in ["rf", "dt", "gbt", "lr"]:
+        key = f"classification_{name}"
+        model = _models.get(key)
+        if model is None:
+            continue
+        y_pred = model.predict(X)
+        tp = int(((y_pred == 1) & (y_true == 1)).sum())
+        fp = int(((y_pred == 1) & (y_true == 0)).sum())
+        fn = int(((y_pred == 0) & (y_true == 1)).sum())
+        tn = int(((y_pred == 0) & (y_true == 0)).sum())
+        results.append({
+            "model": name.upper(),
+            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+            "total": tp + fp + fn + tn,
+        })
+    return results
 
 
 def model_status() -> Dict[str, Any]:

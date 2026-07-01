@@ -65,7 +65,7 @@ def hdfs_cat(path: str, n: int = 5) -> List[str]:
     return [ln for ln in out.splitlines() if ln]
 
 
-def hbase_shell(commands: str, timeout: int = 30) -> str:
+def hbase_shell(commands: str, timeout: int = 60) -> str:
     """Run hbase shell commands via Docker socket API (no docker CLI needed).
 
     hbase shell -n never exits cleanly from a piped stdin, so we redirect
@@ -79,7 +79,7 @@ def hbase_shell(commands: str, timeout: int = 30) -> str:
         "echo '---HBASE_OUT_START---'\n"
         "hbase shell -n < /tmp/hbase-cmd.cmd > /tmp/hbase-out.log 2>&1 &\n"
         "HB_PID=$!\n"
-        "for i in $(seq 1 15); do\n"
+        "for i in $(seq 1 30); do\n"
         "  if ! kill -0 $HB_PID 2>/dev/null; then break; fi\n"
         "  sleep 1\n"
         "done\n"

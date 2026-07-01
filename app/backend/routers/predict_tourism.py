@@ -238,13 +238,23 @@ def visitor_profile(visitor_id: str):
       - 群体归类（sklearn 聚类）
       - 兴趣偏好（top 3 类型）
     """
+    # 规范化 ID: "1" -> "V00001", "V00001" -> "V00001"
+    vid = visitor_id.strip()
+    if not vid.upper().startswith("V"):
+        try:
+            vid = f"V{int(vid):05d}"
+        except ValueError:
+            pass
+    else:
+        vid = vid.upper()
+
     # 1. 基本信息
     base = mysql_svc.query(
         "SELECT 游客ID, 姓名, 性别, 年龄, 地区 FROM t_visitor WHERE 游客ID = %s",
-        (visitor_id,),
+        (vid,),
     )
     if not base:
-        raise HTTPException(404, f"visitor {visitor_id} not found")
+        raise HTTPException(404, f"visitor {vid} not found")
     v = base[0]
 
     # 2. 行为统计
