@@ -447,22 +447,36 @@ scripts\test-e2e.bat       REM 先跑 23 项验证（应该全 PASS）
 
 ## 附：scripts 速查表
 
-5 个脚本，**用户日常只用前 3 个**：
+5 个 .bat + 1 个 .py，**用户日常只用前 3 个**：
 
 | 脚本 | 用途 | 何时用 |
 |------|------|--------|
-| `start.bat` | 一键启动 15 容器（含 HBase 自动 init + Hive Metastore init） | 每天开机第一次 |
+| `start.bat` | **一键启动全部**：15 容器 → 数据管道 → 模型训练 | 每天开机第一次 |
+| `start-containers.bat` | 只启动 15 容器（不跑数据管道/训练） | 重启容器时 |
+| `start-app.bat` | 只跑数据管道 (CSV→MySQL→Sqoop→Spark→Hive) | 数据重新初始化 |
+| `start-train.bat` | 只跑模型训练 (spark_train→FPGrowth→Apriori) | 模型重训 |
 | `stop.bat` | 停止所有容器（数据保留在 volume） | 不用时 |
 | `reset.bat` | 完全重置（清空所有数据卷，会询问 yes） | 重新开始 |
+| `test-e2e.bat` | 23 项端到端验证（7 场景：MySQL/HDFS/HBase/Spark/Hive/Backend/ML）| CI / 调试 |
 | `install-deps.bat` | 创建本地 venv + pip install（仅 IDE 用） | 用编辑器写代码时 |
-| `test-e2e.bat` | 25 项端到端验证（7 场景：MySQL/HDFS/HBase/Spark/Hive/Backend/ML）| CI / 调试 |
+| `run.py` | Python 驱动（被 .bat 调用；一般不直接用） | 高级用户 |
 
 **典型工作流**：
 ```bat
-scripts\start.bat      REM 第一次：启动 15 容器
-scripts\test-e2e.bat   REM 验证：7 场景 23 项应该全 PASS
-REM 浏览器 http://localhost:8080 玩耍 (5 页 + 49 API)
-scripts\stop.bat       REM 关闭
+scripts\start.bat        REM 第一次：全部搞定（容器+数据+模型，~20 分钟）
+scripts\test-e2e.bat     REM 验证：7 场景 23 项应该全 PASS
+REM 浏览器 http://localhost:8080 玩 (4 页: 总览/分析/预测/管理)
+scripts\stop.bat         REM 关闭（数据保留）
+```
+
+**只想重启容器？**
+```bat
+scripts\start-containers.bat   REM 只起容器，不重跑数据/训练
+```
+
+**只想重新训练模型？**
+```bat
+scripts\start-train.bat        REM 只跑 spark_train + FPGrowth + Apriori
 ```
 
 ---
