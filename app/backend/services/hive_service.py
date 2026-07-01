@@ -88,18 +88,20 @@ def _parse_beeline_tsv(out: str) -> List[Dict[str, Any]]:
 def timeseries(metric: str, start: str, end: str) -> List[Dict[str, Any]]:
     """Daily visitors / amount time series from Hive."""
     if metric == "visitors":
-        return _beeline(
-            f"SELECT TO_DATE(v.visit_time) AS d, COUNT(*) AS n "
+        rows = _beeline(
+            f"SELECT TO_DATE(v.visit_time) AS `date`, COUNT(*) AS value "
             f"FROM {HIVE_DB}.ext_t_visit_record v "
             f"WHERE v.visit_time BETWEEN '{start}' AND '{end} 23:59:59' "
-            f"GROUP BY TO_DATE(v.visit_time) ORDER BY d"
+            f"GROUP BY TO_DATE(v.visit_time) ORDER BY `date`"
         )
-    return _beeline(
-        f"SELECT TO_DATE(c.consume_time) AS d, SUM(c.amount) AS n "
-        f"FROM {HIVE_DB}.ext_t_consumption c "
-        f"WHERE c.consume_time BETWEEN '{start}' AND '{end} 23:59:59' "
-        f"GROUP BY TO_DATE(c.consume_time) ORDER BY d"
-    )
+    else:
+        rows = _beeline(
+            f"SELECT TO_DATE(c.consume_time) AS `date`, SUM(c.amount) AS value "
+            f"FROM {HIVE_DB}.ext_t_consumption c "
+            f"WHERE c.consume_time BETWEEN '{start}' AND '{end} 23:59:59' "
+            f"GROUP BY TO_DATE(c.consume_time) ORDER BY `date`"
+        )
+    return rows
 
 
 def daily_series(start: str, end: str) -> List[Dict[str, Any]]:
@@ -178,16 +180,17 @@ def hourly_distribution() -> List[Dict[str, Any]]:
 
 
 def region_top(limit: int = 20) -> List[Dict[str, Any]]:
-    return _beeline(
-        f"SELECT v.region AS region, COUNT(*) AS visitors "
+    rows = _beeline(
+        f"SELECT v.地区 AS region, COUNT(*) AS visitors "
         f"FROM {HIVE_DB}.ext_t_visit_record t "
         f"JOIN {HIVE_DB}.ext_t_visitor v ON t.visitor_id = v.visitor_id "
-        f"GROUP BY v.region ORDER BY visitors DESC LIMIT {limit}"
+        f"GROUP BY v.地区 ORDER BY visitors DESC LIMIT {limit}"
     )
+    return rows
 
 
 def age_gender() -> List[Dict[str, Any]]:
-    return _beeline(
+    rows = _beeline(
         "SELECT "
         "  CASE WHEN v.age < 18 THEN '<18' "
         "       WHEN v.age < 25 THEN '18-24' "
@@ -199,30 +202,61 @@ def age_gender() -> List[Dict[str, Any]]:
         f"FROM {HIVE_DB}.ext_t_visitor v "
         "GROUP BY bucket, gender ORDER BY bucket"
     )
+    return rows
 
 
 def type_summary() -> List[Dict[str, Any]]:
-    """Type-level visitor/consumption summary."""
-    rows = _beeline(
-        f"SELECT a.type AS type, "
-        f"       COUNT(DISTINCT a.attraction_id) AS attractions, "
-        f"       COALESCE(SUM(c.amount), 0) AS consume_total, "
-        f"       COALESCE(COUNT(DISTINCT v.visitor_id), 0) AS visitors, "
-        f"       COALESCE(AVG(v.duration_hours), 0) AS avg_duration "
-        f"FROM {HIVE_DB}.ext_t_attraction a "
-        f"LEFT JOIN {HIVE_DB}.ext_t_consumption c ON a.attraction_id = c.attraction_id "
-        f"LEFT JOIN {HIVE_DB}.ext_t_visit_record v ON a.attraction_id = v.attraction_id "
-        f"GROUP BY a.type ORDER BY visitors DESC"
+    """Type-level visitor/consumption summary. Splits into 2 queries to avoid
+    3-JOIN MR explosion (10 * 100k * 100k rows in local runner)."""
+    attr_rows = _beeline(
+        f"SELECT a.attraction_id AS aid, a.attraction_type AS type "
+        f"FROM {HIVE_DB}.ext_t_attraction a"
     )
-    # Convert numeric strings to floats
-    for r in rows:
-        for k in ("attractions", "consume_total", "visitors", "avg_duration"):
-            if k in r:
-                try:
-                    r[k] = float(r[k])
-                except (ValueError, TypeError):
-                    r[k] = 0
-    return rows
+    if not attr_rows:
+        return []
+    aid_to_type = {r["aid"]: r.get("type", "") for r in attr_rows}
+    counts = {}
+    for aid, t in aid_to_type.items():
+        counts[t] = {"attractions": 0, "consume_total": 0.0, "visitors": 0, "dur_sum": 0.0, "dur_n": 0}
+    for aid, t in aid_to_type.items():
+        counts[t]["attractions"] += 1
+
+    cons_rows = _beeline(
+        f"SELECT c.attraction_id AS aid, c.amount AS amount "
+        f"FROM {HIVE_DB}.ext_t_consumption c"
+    )
+    for r in cons_rows:
+        t = aid_to_type.get(r.get("aid", ""))
+        if t and counts.get(t) is not None:
+            counts[t]["consume_total"] += float(r.get("amount") or 0)
+
+    visit_rows = _beeline(
+        f"SELECT v.attraction_id AS aid, v.visitor_id AS vid, v.duration_hours AS dur "
+        f"FROM {HIVE_DB}.ext_t_visit_record v"
+    )
+    visitor_sets = {t: set() for t in counts}
+    for r in visit_rows:
+        t = aid_to_type.get(r.get("aid", ""))
+        if t and counts.get(t) is not None:
+            vid = r.get("vid")
+            if vid:
+                visitor_sets[t].add(vid)
+            dur = r.get("dur")
+            if dur is not None:
+                counts[t]["dur_sum"] += float(dur)
+                counts[t]["dur_n"] += 1
+
+    out = []
+    for t, c in counts.items():
+        out.append({
+            "type": t,
+            "attractions": c["attractions"],
+            "consume_total": round(c["consume_total"], 2),
+            "visitors": len(visitor_sets[t]),
+            "avg_duration": round(c["dur_sum"] / c["dur_n"], 2) if c["dur_n"] else 0,
+        })
+    out.sort(key=lambda r: r["visitors"], reverse=True)
+    return out
 
 
 def daily_compare(start: str, end: str, split_date: str = "2023-09-01") -> Dict[str, Any]:

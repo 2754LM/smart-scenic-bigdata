@@ -321,7 +321,7 @@ services:
       dockerfile: Dockerfile
     image: smart-scenic/hive:custom
     container_name: hive-server-1
-    mem_limit: 1280m
+    mem_limit: 3072m
     hostname: hive-server-1
     restart: unless-stopped
     depends_on:
@@ -334,6 +334,7 @@ services:
       HIVE_CONF_DIR: /opt/hive/conf
       SERVICE_NAME: hiveserver2
       JAVA_HOME: /usr/local/openjdk-8
+      HIVESERVER2_HADOOP_OPTS: "-Xmx2048m -Djava.library.path=/opt/hadoop/lib/native"
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
@@ -388,7 +389,7 @@ services:
       dockerfile: Dockerfile
     image: smart-scenic/hive:custom
     container_name: hive-server-2
-    mem_limit: 1280m
+    mem_limit: 3072m
     hostname: hive-server-2
     restart: unless-stopped
     depends_on:
@@ -402,6 +403,7 @@ services:
       HIVE_CONF_DIR: /opt/hive/conf
       SERVICE_NAME: hiveserver2
       JAVA_HOME: /usr/local/openjdk-8
+      HIVESERVER2_HADOOP_OPTS: "-Xmx2048m -Djava.library.path=/opt/hadoop/lib/native"
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
